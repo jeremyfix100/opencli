@@ -60,7 +60,8 @@
     "test:e2e": "vitest run --project e2e",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
-    "docs:preview": "vitepress preview docs"
+    "docs:preview": "vitepress preview docs",
+    "docs:commands": "tsx scripts/generate-commands.ts"
   },
   "keywords": [
     "cli",
