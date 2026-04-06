@@ -269,6 +269,38 @@ opencli generate https://example.com --goal "hot"   # One-shot: explore → synt
 opencli cascade https://api.example.com/data         # Auto-probe: PUBLIC → COOKIE → HEADER
 ```
 
+## for mkt-signal-core integration
+
+### Command inventory
+
+- `indiegogo/search`: `opencli indiegogo search ... -f json`
+- `kickstarter/search`: `opencli kickstarter search ... -f json`
+- `huodongxing/search`: `opencli huodongxing search ... -f json`
+
+### Stable JSON fields
+
+Each command returns a JSON array (`-f json`) and each record includes this minimal subset for stable downstream parsing:
+
+- `title`
+- `url` (absolute URL)
+- `author` (nullable)
+- `published_at` (nullable)
+- `engagement` (site-specific metrics such as `backers` or `signupCount`)
+- `raw_id` (nullable)
+
+### Stability guardrails
+
+- Auth/login expired/risk-control pages raise `AuthRequiredError` (exit code `77`) instead of returning ambiguous data.
+- Empty records raise `EmptyResultError` (exit code `66`) instead of silently returning `[]`.
+
+### `-f json` examples (3 sites)
+
+```bash
+opencli indiegogo search 'https://www.indiegogo.com/projects/search?sort=trending' --limit 20 -f json
+opencli kickstarter search 'https://www.kickstarter.com/discover/advanced?sort=popularity' --limit 20 -f json
+opencli huodongxing search 'https://www.huodongxing.com/search?wd=AI' --limit 20 -f json
+```
+
 ## Testing
 
 See **[TESTING.md](./TESTING.md)** for how to run and write tests.
