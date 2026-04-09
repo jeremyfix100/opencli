@@ -3343,6 +3343,9 @@
       "title",
       "author",
       "signupCount",
+      "event_time",
+      "location",
+      "fee",
       "published_at",
       "url",
       "raw_id"

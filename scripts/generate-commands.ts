@@ -20,12 +20,94 @@ interface Command {
 interface SiteGroup {
   site: string;
   category: 'cn' | 'en' | 'electron';
+  industry: Industry;
   domain: string;
   commands: Omit<Command, 'site'>[];
 }
 
 const CN_DOMAINS = ['.cn', '36kr.com', 'bilibili.com', 'zhihu.com', 'weibo.com', 'douban.com', 'taobao.com', 'jd.com', 'baidu.com', 'aliyun.com', 'tencent.com', 'sina.com.cn', 'sohu.com', '163.com', '126.com', 'qq.com', 'alipay.com', 'toutiao.com', 'xueqiu.com', 'hupu.com', 'smzdm.com', 'v2ex.com', 'xiachufang.com', 'douyin.com', 'kuaishou.com', 'meituan.com', 'dianping.com', 'ele.me', 'ctrip.com', '12306.cn', 'huya.com', 'douyu.com', 'longzhu.com', 'zhanqi.com', 'cc.163.com', 'game.163.com', 'music.163.com', 'mail.163.com', 'you.163.com', 'yanxuan.com', 'kaola.com', 'suning.com', 'gome.com.cn', 'vip.com', 'justpinyin.cn', 'pinduoduo.com', 'meituan.com', 'wmw.cn', 'xiangyung.cn', 'tujia.com', 'airbnb.cn', 'lianjia.com', 'anjuke.com', '58.com', 'ganji.com', 'baixing.com', 'dazhongdianping.com', 'diandian.com', 'paidai.com', 'wangdaishujia.com', 'cd.163.com', 'm.163.com', 'war.163.com', 'game.163.com', 'go.163.com', 'happy.163.com'];
 const CN_SITES = ['36kr', 'bilibili', 'zhihu', 'xiaohongshu', 'weibo', 'douban', 'jd', 'taobao', 'alipay', 'toutiao', 'xueqiu', 'hupu', 'smzdm', 'v2ex', 'douyin', 'tiktok', 'kuaishou', 'meituan', 'dianping', 'ctrip', 'huya', 'douyu', 'xianyu', 'xiaoe', 'notion', 'ones', 'linux-do', 'band', 'zsxq', 'chaoxing', 'jike', 'xianyu', 'jimeng', 'yollomi', 'yuanbao', 'doubao', 'weread', 'xianyu'];
+
+type Industry = 'news' | 'social' | 'video' | 'ecommerce' | 'developer' | 'finance' | 'ai' | 'electron' | 'other';
+
+const INDUSTRY_MAP: Record<string, Industry> = {
+  '36kr': 'news',
+  'hackernews': 'news',
+  'bbc': 'news',
+  'reuters': 'news',
+  'bloomberg': 'news',
+  'yahoo-finance': 'finance',
+  'sinafinance': 'finance',
+  'barchart': 'finance',
+  'xueqiu': 'finance',
+  'bilibili': 'video',
+  'youtube': 'video',
+  'douyin': 'video',
+  'tiktok': 'video',
+  'twitch': 'video',
+  'instagram': 'social',
+  'twitter': 'social',
+  'facebook': 'social',
+  'weibo': 'social',
+  'douban': 'social',
+  'zhihu': 'social',
+  'xiaohongshu': 'social',
+  'reddit': 'social',
+  'discord-app': 'social',
+  'v2ex': 'social',
+  'hupu': 'social',
+  'smzdm': 'social',
+  'bluesky': 'social',
+  'linkedin': 'social',
+  'band': 'social',
+  'linux-do': 'social',
+  'jike': 'social',
+  'jd': 'ecommerce',
+  'taobao': 'ecommerce',
+  'amazon': 'ecommerce',
+  'ebay': 'ecommerce',
+  'coupang': 'ecommerce',
+  '1688': 'ecommerce',
+  'pinduoduo': 'ecommerce',
+  'xianyu': 'ecommerce',
+  'steam': 'ecommerce',
+  'indiegogo': 'ecommerce',
+  'kickstarter': 'ecommerce',
+  'stackoverflow': 'developer',
+  'devto': 'developer',
+  'github': 'developer',
+  'gitlab': 'developer',
+  'hf': 'developer',
+  'arxiv': 'developer',
+  'lobsters': 'developer',
+  'dictionary': 'developer',
+  'notion': 'ai',
+  'chatgpt': 'ai',
+  'claude': 'ai',
+  'grok': 'ai',
+  'gemini': 'ai',
+  'cursor': 'ai',
+  'antigravity': 'ai',
+  'doubao-app': 'ai',
+  'chatwise': 'ai',
+  'codex': 'ai',
+  'jimeng': 'ai',
+  'yollomi': 'ai',
+  'yuanbao': 'ai',
+  'notebooklm': 'ai',
+  'substack': 'news',
+  'medium': 'news',
+  'pixiv': 'video',
+  'sinablog': 'news',
+  'tieba': 'social',
+  'ctrip': 'ecommerce',
+  'weixin': 'social',
+  'google': 'ai',
+};
+
+function getIndustry(site: string): Industry {
+  return INDUSTRY_MAP[site] || 'other';
+}
 
 function getCategory(domain: string, site: string): 'cn' | 'en' | 'electron' {
   if (!domain || domain === 'localhost') return 'electron';
@@ -43,6 +125,7 @@ function main() {
       siteMap.set(cmd.site, {
         site: cmd.site,
         category: getCategory(cmd.domain, cmd.site),
+        industry: getIndustry(cmd.site),
         domain: cmd.domain,
         commands: []
       });

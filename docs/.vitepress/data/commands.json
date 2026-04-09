@@ -2,6 +2,7 @@
   {
     "site": "36kr",
     "category": "cn",
+    "industry": "news",
     "domain": "www.36kr.com",
     "commands": [
       {
@@ -109,6 +110,7 @@
   {
     "site": "antigravity",
     "category": "electron",
+    "industry": "ai",
     "domain": "localhost",
     "commands": [
       {
@@ -230,6 +232,7 @@
   {
     "site": "apple-podcasts",
     "category": "electron",
+    "industry": "other",
     "commands": [
       {
         "name": "top",
@@ -264,6 +267,7 @@
   {
     "site": "band",
     "category": "cn",
+    "industry": "social",
     "domain": "www.band.us",
     "commands": [
       {
@@ -401,6 +405,7 @@
   {
     "site": "barchart",
     "category": "en",
+    "industry": "finance",
     "domain": "www.barchart.com",
     "commands": [
       {
@@ -571,6 +576,7 @@
   {
     "site": "bbc",
     "category": "en",
+    "industry": "news",
     "domain": "www.bbc.com",
     "commands": [
       {
@@ -600,6 +606,7 @@
   {
     "site": "bilibili",
     "category": "cn",
+    "industry": "video",
     "domain": "www.bilibili.com",
     "commands": [
       {
@@ -631,6 +638,7 @@
   {
     "site": "bluesky",
     "category": "en",
+    "industry": "social",
     "domain": "public.api.bsky.app",
     "commands": [
       {
@@ -892,6 +900,7 @@
   {
     "site": "chatgpt",
     "category": "electron",
+    "industry": "ai",
     "domain": "localhost",
     "commands": [
       {
@@ -921,6 +930,7 @@
   {
     "site": "chatwise",
     "category": "electron",
+    "industry": "ai",
     "domain": "localhost",
     "commands": [
       {
@@ -1038,6 +1048,7 @@
   {
     "site": "codex",
     "category": "electron",
+    "industry": "ai",
     "domain": "localhost",
     "commands": [
       {
@@ -1167,6 +1178,7 @@
   {
     "site": "ctrip",
     "category": "electron",
+    "industry": "ecommerce",
     "commands": [
       {
         "name": "search",
@@ -1203,6 +1215,7 @@
   {
     "site": "cursor",
     "category": "electron",
+    "industry": "ai",
     "domain": "localhost",
     "commands": [
       {
@@ -1352,6 +1365,7 @@
   {
     "site": "devto",
     "category": "en",
+    "industry": "developer",
     "domain": "dev.to",
     "commands": [
       {
@@ -1447,6 +1461,7 @@
   {
     "site": "dictionary",
     "category": "en",
+    "industry": "developer",
     "domain": "api.dictionaryapi.dev",
     "commands": [
       {
@@ -1516,6 +1531,7 @@
   {
     "site": "discord-app",
     "category": "electron",
+    "industry": "social",
     "domain": "localhost",
     "commands": [
       {
@@ -1635,6 +1651,7 @@
   {
     "site": "douban",
     "category": "cn",
+    "industry": "social",
     "domain": "movie.douban.com",
     "commands": [
       {
@@ -1697,6 +1714,7 @@
   {
     "site": "doubao-app",
     "category": "en",
+    "industry": "ai",
     "domain": "doubao-app",
     "commands": [
       {
@@ -1748,6 +1766,7 @@
   {
     "site": "douyin",
     "category": "cn",
+    "industry": "video",
     "domain": "creator.douyin.com",
     "commands": [
       {
@@ -1807,6 +1826,7 @@
   {
     "site": "facebook",
     "category": "en",
+    "industry": "social",
     "domain": "www.facebook.com",
     "commands": [
       {
@@ -2043,6 +2063,7 @@
   {
     "site": "google",
     "category": "en",
+    "industry": "ai",
     "domain": "google.com",
     "commands": [
       {
@@ -2111,6 +2132,7 @@
   {
     "site": "grok",
     "category": "en",
+    "industry": "ai",
     "domain": "grok.com",
     "commands": [
       {
@@ -2158,6 +2180,7 @@
   {
     "site": "hackernews",
     "category": "en",
+    "industry": "news",
     "domain": "news.ycombinator.com",
     "commands": [
       {
@@ -2374,6 +2397,7 @@
   {
     "site": "hf",
     "category": "en",
+    "industry": "developer",
     "domain": "huggingface.co",
     "commands": [
       {
@@ -2422,6 +2446,7 @@
   {
     "site": "huodongxing",
     "category": "en",
+    "industry": "other",
     "domain": "www.huodongxing.com",
     "commands": [
       {
@@ -2460,6 +2485,7 @@
   {
     "site": "hupu",
     "category": "cn",
+    "industry": "social",
     "domain": "bbs.hupu.com",
     "commands": [
       {
@@ -2489,6 +2515,7 @@
   {
     "site": "indiegogo",
     "category": "en",
+    "industry": "ecommerce",
     "domain": "www.indiegogo.com",
     "commands": [
       {
@@ -2527,6 +2554,7 @@
   {
     "site": "instagram",
     "category": "en",
+    "industry": "social",
     "domain": "www.instagram.com",
     "commands": [
       {
@@ -2971,6 +2999,7 @@
   {
     "site": "jd",
     "category": "cn",
+    "industry": "ecommerce",
     "domain": "item.jd.com",
     "commands": [
       {
@@ -3008,6 +3037,7 @@
   {
     "site": "jike",
     "category": "cn",
+    "industry": "social",
     "domain": "web.okjike.com",
     "commands": [
       {
@@ -3218,6 +3248,7 @@
   {
     "site": "jimeng",
     "category": "cn",
+    "industry": "ai",
     "domain": "jimeng.jianying.com",
     "commands": [
       {
@@ -3287,6 +3318,7 @@
   {
     "site": "kickstarter",
     "category": "en",
+    "industry": "ecommerce",
     "domain": "www.kickstarter.com",
     "commands": [
       {
@@ -3325,6 +3357,7 @@
   {
     "site": "linkedin",
     "category": "en",
+    "industry": "social",
     "domain": "www.linkedin.com",
     "commands": [
       {
@@ -3441,6 +3474,7 @@
   {
     "site": "linux-do",
     "category": "cn",
+    "industry": "social",
     "domain": "linux.do",
     "commands": [
       {
@@ -3736,6 +3770,7 @@
   {
     "site": "lobsters",
     "category": "en",
+    "industry": "developer",
     "domain": "lobste.rs",
     "commands": [
       {
@@ -3850,6 +3885,7 @@
   {
     "site": "notion",
     "category": "electron",
+    "industry": "ai",
     "domain": "localhost",
     "commands": [
       {
@@ -3984,6 +4020,7 @@
   {
     "site": "pixiv",
     "category": "en",
+    "industry": "video",
     "domain": "www.pixiv.net",
     "commands": [
       {
@@ -4098,6 +4135,7 @@
   {
     "site": "reddit",
     "category": "en",
+    "industry": "social",
     "domain": "reddit.com",
     "commands": [
       {
@@ -4582,6 +4620,7 @@
   {
     "site": "reuters",
     "category": "en",
+    "industry": "news",
     "domain": "www.reuters.com",
     "commands": [
       {
@@ -4619,6 +4658,7 @@
   {
     "site": "sinablog",
     "category": "cn",
+    "industry": "news",
     "domain": "blog.sina.com.cn",
     "commands": [
       {
@@ -4657,6 +4697,7 @@
   {
     "site": "sinafinance",
     "category": "cn",
+    "industry": "finance",
     "domain": "app.cj.sina.com.cn",
     "commands": [
       {
@@ -4774,6 +4815,7 @@
   {
     "site": "smzdm",
     "category": "cn",
+    "industry": "social",
     "domain": "www.smzdm.com",
     "commands": [
       {
@@ -4812,6 +4854,7 @@
   {
     "site": "stackoverflow",
     "category": "en",
+    "industry": "developer",
     "domain": "stackoverflow.com",
     "commands": [
       {
@@ -4919,6 +4962,7 @@
   {
     "site": "steam",
     "category": "en",
+    "industry": "ecommerce",
     "domain": "store.steampowered.com",
     "commands": [
       {
@@ -4950,6 +4994,7 @@
   {
     "site": "substack",
     "category": "en",
+    "industry": "news",
     "domain": "substack.com",
     "commands": [
       {
@@ -4999,6 +5044,7 @@
   {
     "site": "tiktok",
     "category": "cn",
+    "industry": "video",
     "domain": "www.tiktok.com",
     "commands": [
       {
@@ -5371,6 +5417,7 @@
   {
     "site": "twitter",
     "category": "en",
+    "industry": "social",
     "domain": "x.com",
     "commands": [
       {
@@ -5931,6 +5978,7 @@
   {
     "site": "v2ex",
     "category": "cn",
+    "industry": "social",
     "domain": "www.v2ex.com",
     "commands": [
       {
@@ -6200,6 +6248,7 @@
   {
     "site": "web",
     "category": "electron",
+    "industry": "other",
     "commands": [
       {
         "name": "read",
@@ -6248,6 +6297,7 @@
   {
     "site": "weibo",
     "category": "cn",
+    "industry": "social",
     "domain": "weibo.com",
     "commands": [
       {
@@ -6387,6 +6437,7 @@
   {
     "site": "weixin",
     "category": "cn",
+    "industry": "social",
     "domain": "mp.weixin.qq.com",
     "commands": [
       {
@@ -6430,6 +6481,7 @@
   {
     "site": "xianyu",
     "category": "cn",
+    "industry": "ecommerce",
     "domain": "www.goofish.com",
     "commands": [
       {
@@ -6471,6 +6523,7 @@
   {
     "site": "xiaoe",
     "category": "cn",
+    "industry": "other",
     "domain": "h5.xet.citv.cn",
     "commands": [
       {
@@ -6583,6 +6636,7 @@
   {
     "site": "xiaohongshu",
     "category": "cn",
+    "industry": "social",
     "domain": "creator.xiaohongshu.com",
     "commands": [
       {
@@ -6809,6 +6863,7 @@
   {
     "site": "xueqiu",
     "category": "cn",
+    "industry": "finance",
     "domain": "xueqiu.com",
     "commands": [
       {
@@ -7105,6 +7160,7 @@
   {
     "site": "yahoo-finance",
     "category": "en",
+    "industry": "finance",
     "domain": "finance.yahoo.com",
     "commands": [
       {
@@ -7140,6 +7196,7 @@
   {
     "site": "youtube",
     "category": "en",
+    "industry": "video",
     "domain": "www.youtube.com",
     "commands": [
       {
@@ -7227,6 +7284,7 @@
   {
     "site": "zhihu",
     "category": "cn",
+    "industry": "social",
     "domain": "zhuanlan.zhihu.com",
     "commands": [
       {

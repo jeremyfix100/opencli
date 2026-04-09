@@ -20,6 +20,7 @@
     "./types": "./dist/src/types.js",
     "./utils": "./dist/src/utils.js",
     "./logger": "./dist/src/logger.js",
+    "./debug-trace": "./dist/src/debug-trace.js",
     "./launcher": "./dist/src/launcher.js",
     "./browser/cdp": "./dist/src/browser/cdp.js",
     "./browser/page": "./dist/src/browser/page.js",
@@ -28,7 +29,9 @@
     "./download/article-download": "./dist/src/download/article-download.js",
     "./download/media-download": "./dist/src/download/media-download.js",
     "./download/progress": "./dist/src/download/progress.js",
-    "./pipeline": "./dist/src/pipeline/index.js"
+    "./pipeline": "./dist/src/pipeline/index.js",
+    "./dom-distill": "./dist/src/dom-distill.js",
+    "./selector-learning": "./dist/src/selector-learning.js"
   },
   "files": [
     "dist/src/",
@@ -80,6 +83,7 @@
     "chalk": "^5.3.0",
     "cli-table3": "^0.6.5",
     "commander": "^14.0.3",
+    "mkt-learning-engine": "file:../mkt-learning-engine",
     "js-yaml": "^4.1.0",
     "turndown": "^7.2.2",
     "undici": "^7.24.6",

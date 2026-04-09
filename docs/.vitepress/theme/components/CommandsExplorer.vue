@@ -1,66 +1,76 @@
 <template>
   <div class="commands-explorer">
-    <div class="search-bar">
+    <div class="header-row">
       <input
-        v-model="searchQuery"
+        :value="searchQuery"
+        @input="searchQuery = ($event.target as HTMLInputElement).value"
         type="text"
-        placeholder="搜索站点或命令..."
+        placeholder="搜索站点、命令..."
         class="search-input"
       />
+      <div class="industry-tabs">
+        <button
+          v-for="ind in industries"
+          :key="ind.value"
+          :class="['tab', { active: activeIndustry === ind.value }]"
+          @click="activeIndustry = ind.value"
+        >
+          {{ ind.label }}
+          <span class="count">({{ getIndustryCount(ind.value) }})</span>
+        </button>
+      </div>
     </div>
 
-    <div class="category-tabs">
-      <button
-        v-for="cat in categories"
-        :key="cat.value"
-        :class="['tab', { active: activeCategory === cat.value }]"
-        @click="activeCategory = cat.value"
-      >
-        {{ cat.label }}
-        <span class="count">({{ getCategoryCount(cat.value) }})</span>
-      </button>
-    </div>
-
-    <div class="sites-grid">
+    <div class="sites-table">
+      <div class="table-header">
+        <span class="col-site">站点</span>
+        <span class="col-industry">类型</span>
+        <span class="col-commands">命令</span>
+        <span class="col-desc">简介</span>
+      </div>
       <div
         v-for="site in filteredSites"
         :key="site.site"
-        :class="['site-card', { expanded: expandedSite === site.site }]"
-        @click="toggleSite(site.site)"
+        :class="['table-row', { expanded: expandedSite === site.site }]"
       >
-        <div class="site-header">
-          <h3>{{ site.site }}</h3>
-          <span class="domain">{{ site.domain }}</span>
-          <span :class="['badge', site.category]">{{ site.category.toUpperCase() }}</span>
+        <div class="row-main" @click="toggleSite(site.site)">
+          <span class="col-site">
+            <strong>{{ site.site }}</strong>
+            <small class="domain">{{ site.domain }}</small>
+          </span>
+          <span :class="['col-industry', 'badge', site.industry]">{{ getIndustryLabel(site.industry) }}</span>
+          <span class="col-commands">
+            <span
+              v-for="cmd in site.commands.slice(0, 8)"
+              :key="cmd.name"
+              class="cmd-tag"
+              :title="cmd.name"
+            >{{ cmd.name }}</span>
+            <span v-if="site.commands.length > 8" class="more">+{{ site.commands.length - 8 }}</span>
+          </span>
+          <span class="col-desc">{{ getCommandSummary(site) }}</span>
         </div>
-        <div class="site-commands-count">{{ site.commands.length }} commands</div>
-        
-        <div v-if="expandedSite === site.site" class="site-details">
+        <div v-if="expandedSite === site.site" class="row-details" @click.stop>
           <div
             v-for="cmd in site.commands"
             :key="cmd.name"
             class="command-item"
           >
-            <div class="command-header">
-              <code class="command-name">opencli {{ site.site }} {{ cmd.name }}</code>
+            <div class="cmd-header">
+              <code class="cmd-full" @click="copyCommand(site.site, cmd.name)" title="点击复制">{{ site.site }} {{ cmd.name }}</code>
+              <span class="cmd-desc">{{ cmd.description }}</span>
             </div>
-            <p class="command-desc">{{ cmd.description }}</p>
-            
-            <div v-if="cmd.args && cmd.args.length" class="command-args">
-              <strong>参数:</strong>
-              <ul>
-                <li v-for="arg in cmd.args" :key="arg.name">
-                  <code>{{ arg.name }}</code>
-                  <span v-if="arg.default">={{ arg.default }}</span>
-                  <span v-if="arg.required" class="required">*</span>
-                  - {{ arg.help }}
-                </li>
-              </ul>
-            </div>
-            
-            <div v-if="cmd.columns && cmd.columns.length" class="command-columns">
-              <strong>输出字段:</strong>
-              <code v-for="col in cmd.columns" :key="col" class="column-tag">{{ col }}</code>
+            <div class="cmd-meta">
+              <span v-if="cmd.args.length" class="meta-line">
+                <span class="meta-label">参数</span>：
+                <span v-for="(arg, i) in cmd.args" :key="arg.name" class="arg-tag" :title="arg.help">
+                  {{ arg.name }}{{ arg.default ? `=${arg.default}` : '' }}{{ arg.required ? '*' : '' }}{{ i < cmd.args.length - 1 ? ', ' : '' }}
+                </span>
+              </span>
+              <span v-if="cmd.columns.length" class="meta-line">
+                <span class="meta-label">返回</span>：
+                <span v-for="(col, i) in cmd.columns" :key="col" class="col-tag">{{ col }}{{ i < cmd.columns.length - 1 ? ', ' : '' }}</span>
+              </span>
             </div>
           </div>
         </div>
@@ -77,6 +87,8 @@
 import { ref, computed } from 'vue';
 import commandsData from '../../../.vitepress/data/commands.json';
 
+type Industry = 'news' | 'social' | 'video' | 'ecommerce' | 'developer' | 'finance' | 'ai' | 'electron' | 'other';
+
 interface Command {
   name: string;
   description: string;
@@ -90,67 +102,115 @@ interface Command {
 interface SiteGroup {
   site: string;
   category: 'cn' | 'en' | 'electron';
+  industry: Industry;
   domain: string;
   commands: Command[];
 }
 
 const searchQuery = ref('');
-const activeCategory = ref('all');
+const activeIndustry = ref('all');
 const expandedSite = ref<string | null>(null);
 
-const categories = [
+const INDUSTRY_LABELS: Record<Industry, string> = {
+  news: '资讯',
+  social: '社区',
+  video: '视频',
+  ecommerce: '电商',
+  developer: '开发',
+  finance: '金融',
+  ai: 'AI',
+  electron: 'App',
+  other: '其他'
+};
+
+const industries = [
   { value: 'all', label: '全部' },
-  { value: 'cn', label: '中文站点' },
-  { value: 'en', label: '英文站点' },
-  { value: 'electron', label: 'Electron App' }
+  { value: 'ai', label: 'AI' },
+  { value: 'social', label: '社区' },
+  { value: 'video', label: '视频' },
+  { value: 'news', label: '资讯' },
+  { value: 'ecommerce', label: '电商' },
+  { value: 'developer', label: '开发' },
+  { value: 'finance', label: '金融' },
+  { value: 'electron', label: 'App' }
 ] as const;
 
 const sites = ref<SiteGroup[]>(commandsData as SiteGroup[]);
 
 const filteredSites = computed(() => {
   return sites.value.filter(site => {
-    if (activeCategory.value !== 'all' && site.category !== activeCategory.value) {
+    if (activeIndustry.value !== 'all' && site.industry !== activeIndustry.value) {
       return false;
     }
     if (searchQuery.value) {
       const query = searchQuery.value.toLowerCase();
       const matchSite = site.site.toLowerCase().includes(query);
+      const matchDomain = site.domain.toLowerCase().includes(query);
       const matchCmd = site.commands.some(cmd => 
         cmd.name.toLowerCase().includes(query) ||
         cmd.description.toLowerCase().includes(query)
       );
-      return matchSite || matchCmd;
+      return matchSite || matchDomain || matchCmd;
     }
     return true;
   });
 });
 
-function getCategoryCount(category: string) {
-  if (category === 'all') return sites.value.length;
-  return sites.value.filter(s => s.category === category).length;
+function getIndustryCount(industry: string) {
+  if (industry === 'all') return sites.value.length;
+  return sites.value.filter(s => s.industry === industry).length;
+}
+
+function getIndustryLabel(industry: Industry): string {
+  return INDUSTRY_LABELS[industry] || industry;
+}
+
+function getCommandSummary(site: SiteGroup): string {
+  const names = site.commands.slice(0, 3).map(c => c.name).join(', ');
+  return site.commands.length > 3 ? `${names}...` : names;
 }
 
 function toggleSite(siteName: string) {
   expandedSite.value = expandedSite.value === siteName ? null : siteName;
 }
+
+async function copyCommand(site: string, cmd: string) {
+  const text = `opencli ${site} ${cmd}`;
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand('copy');
+    document.body.removeChild(textarea);
+  }
+}
 </script>
 
 <style scoped>
 .commands-explorer {
-  max-width: 1200px;
+  max-width: 1600px;
   margin: 0 auto;
+  font-size: 13px;
 }
 
-.search-bar {
-  margin-bottom: 20px;
+.header-row {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+  align-items: center;
 }
 
 .search-input {
-  width: 100%;
-  padding: 12px 16px;
-  font-size: 16px;
+  flex: 1;
+  min-width: 200px;
+  padding: 8px 12px;
+  font-size: 14px;
   border: 1px solid #e0e0e0;
-  border-radius: 8px;
+  border-radius: 6px;
   background: #fff;
 }
 
@@ -159,21 +219,20 @@ function toggleSite(siteName: string) {
   border-color: #0070f3;
 }
 
-.category-tabs {
+.industry-tabs {
   display: flex;
-  gap: 8px;
-  margin-bottom: 24px;
+  gap: 4px;
   flex-wrap: wrap;
 }
 
 .tab {
-  padding: 8px 16px;
+  padding: 6px 12px;
   border: 1px solid #e0e0e0;
-  border-radius: 20px;
+  border-radius: 16px;
   background: #fff;
   cursor: pointer;
-  font-size: 14px;
-  transition: all 0.2s;
+  font-size: 12px;
+  transition: all 0.15s;
 }
 
 .tab:hover {
@@ -188,130 +247,206 @@ function toggleSite(siteName: string) {
 
 .count {
   opacity: 0.7;
-  margin-left: 4px;
+  margin-left: 3px;
 }
 
-.sites-grid {
-  display: grid;
-  gap: 16px;
-}
-
-.site-card {
-  border: 1px solid #e0e0e0;
+.sites-table {
+  border: 1px solid #e8e8e8;
   border-radius: 8px;
-  padding: 16px;
-  background: #fff;
+  overflow: hidden;
+}
+
+.table-header {
+  display: grid;
+  grid-template-columns: 160px 80px 2fr 2.5fr;
+  gap: 16px;
+  padding: 12px 20px;
+  background: #f5f5f5;
+  font-weight: 600;
+  font-size: 13px;
+  color: #666;
+}
+
+.table-row {
+  border-top: 1px solid #f0f0f0;
   cursor: pointer;
-  transition: all 0.2s;
 }
 
-.site-card:hover {
-  border-color: #0070f3;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+.table-row:hover {
+  background: #fafafa;
 }
 
-.site-card.expanded {
-  border-color: #0070f3;
+.table-row.expanded {
+  background: #f8f9fa;
 }
 
-.site-header {
+.row-main {
+  display: grid;
+  grid-template-columns: 160px 80px 2fr 2.5fr;
+  gap: 16px;
+  padding: 12px 20px;
+  align-items: center;
+}
+
+.col-site strong {
+  display: block;
+  font-size: 14px;
+}
+
+.col-site .domain {
+  display: block;
+  font-size: 11px;
+  color: #888;
+  margin-top: 2px;
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  text-align: center;
+}
+
+.badge.news { background: #fef3c7; color: #92400e; }
+.badge.social { background: #dbeafe; color: #1e40af; }
+.badge.video { background: #fce7f3; color: #9d174d; }
+.badge.ecommerce { background: #fee2e2; color: #991b1b; }
+.badge.developer { background: #e0e7ff; color: #3730a3; }
+.badge.finance { background: #d1fae5; color: #065f46; }
+.badge.ai { background: #f3e8ff; color: #6b21a8; }
+.badge.electron { background: #dcfce7; color: #166534; }
+.badge.other { background: #f3f4f6; color: #374151; }
+
+.col-commands {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.cmd-tag {
+  display: inline-block;
+  padding: 2px 6px;
+  background: #e8e8e8;
+  border-radius: 3px;
+  font-size: 11px;
+  font-family: monospace;
+  max-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.col-commands .more {
+  font-size: 11px;
+  color: #888;
+  padding: 2px 4px;
+}
+
+.col-desc {
+  color: #666;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.row-details {
+  padding: 12px 16px 16px;
+  background: #fff;
+  border-top: 1px solid #e8e8e8;
+}
+
+.command-item {
+  display: block;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  background: #f9f9f9;
+  border-radius: 6px;
+}
+
+.command-item:last-child {
+  margin-bottom: 0;
+}
+
+.cmd-header {
   display: flex;
   align-items: center;
   gap: 12px;
   margin-bottom: 8px;
 }
 
-.site-header h3 {
-  margin: 0;
-  font-size: 18px;
-}
-
-.domain {
-  color: #666;
-  font-size: 14px;
-}
-
-.badge {
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 12px;
-  font-weight: 500;
-}
-
-.badge.cn {
-  background: #fff7ed;
-  color: #c2410c;
-}
-
-.badge.en {
-  background: #eff6ff;
-  color: #1d4ed8;
-}
-
-.badge.electron {
-  background: #f0fdf4;
-  color: #15803d;
-}
-
-.site-commands-count {
-  color: #666;
-  font-size: 14px;
-}
-
-.site-details {
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid #e0e0e0;
-}
-
-.command-item {
-  padding: 12px;
-  margin-bottom: 12px;
-  background: #f9f9f9;
-  border-radius: 6px;
-}
-
-.command-header {
-  margin-bottom: 8px;
-}
-
-.command-name {
-  background: #e8e8e8;
-  padding: 4px 8px;
-  border-radius: 4px;
+.cmd-full {
   font-size: 13px;
-}
-
-.command-desc {
-  margin: 8px 0;
-  color: #444;
-}
-
-.command-args {
-  margin: 12px 0;
-}
-
-.command-args ul {
-  margin: 8px 0;
-  padding-left: 20px;
-}
-
-.command-columns {
-  margin-top: 12px;
-}
-
-.column-tag {
-  display: inline-block;
   background: #e8e8e8;
-  padding: 2px 8px;
-  margin: 2px;
+  padding: 4px 10px;
   border-radius: 4px;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+.cmd-full:hover {
+  background: #dcdcdc;
+}
+
+.cmd-desc {
+  font-size: 13px;
+  color: #555;
+  flex: 1;
+}
+
+.cmd-meta {
+  display: flex;
+  gap: 20px;
+  margin-top: 8px;
+  flex-wrap: wrap;
   font-size: 12px;
+}
+
+.meta-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.meta-label {
+  font-weight: 600;
+  color: #666;
+}
+
+.arg-tag {
+  padding: 2px 6px;
+  background: #fef3c7;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.col-tag {
+  padding: 2px 6px;
+  background: #dbeafe;
+  border-radius: 3px;
+  font-size: 12px;
+  color: #1e40af;
 }
 
 .no-results {
   text-align: center;
   padding: 40px;
   color: #666;
+}
+
+@media (max-width: 900px) {
+  .table-header {
+    display: none;
+  }
+  .row-main {
+    grid-template-columns: 1fr 1fr;
+  }
+  .col-desc {
+    display: none;
+  }
 }
 </style>
