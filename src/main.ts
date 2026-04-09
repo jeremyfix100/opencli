@@ -3,6 +3,19 @@
  * opencli — Make any website your CLI. AI-powered.
  */
 
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { loadProjectEnv } from './env.js';
+import { traceDebug } from './debug-trace.js';
+import { discoverClis, discoverPlugins, ensureUserCliCompatShims, ensureUserAdapters, USER_CLIS_DIR } from './discovery.js';
+import { getCompletions } from './completion.js';
+import { runCli } from './cli.js';
+import { emitHook } from './hooks.js';
+import { installNodeNetwork } from './node-network.js';
+import { registerUpdateNoticeOnExit, checkForUpdateBackground } from './update-check.js';
+import { EXIT_CODES } from './errors.js';
+
 // Ensure standard system paths are available for child processes.
 // Some environments (GUI apps, cron, IDE terminals) launch with a minimal PATH
 // that excludes /usr/local/bin, /usr/sbin, etc., causing external CLIs to fail.
@@ -13,16 +26,13 @@ if (process.platform !== 'win32') {
   process.env.PATH = [...cur].join(':');
 }
 
-import * as os from 'node:os';
-import * as path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { discoverClis, discoverPlugins, ensureUserCliCompatShims, ensureUserAdapters, USER_CLIS_DIR } from './discovery.js';
-import { getCompletions } from './completion.js';
-import { runCli } from './cli.js';
-import { emitHook } from './hooks.js';
-import { installNodeNetwork } from './node-network.js';
-import { registerUpdateNoticeOnExit, checkForUpdateBackground } from './update-check.js';
-import { EXIT_CODES } from './errors.js';
+loadProjectEnv();
+
+traceDebug('opencli', 'env', {
+  llm_endpoint: process.env.MKT_CRAWLER_LLM_ENDPOINT ? 'set' : 'unset',
+  llm_api_key: process.env.MKT_CRAWLER_LLM_API_KEY ? 'set' : 'unset',
+  llm_model: process.env.MKT_CRAWLER_LLM_MODEL ? process.env.MKT_CRAWLER_LLM_MODEL : 'unset',
+});
 
 installNodeNetwork();
 

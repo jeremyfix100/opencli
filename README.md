@@ -133,6 +133,12 @@ After changing `mkt-learning-engine`, rebuild or reinstall `opencli` so the loca
 
 Current code does **not** read `OPENCLI_LEARNING_ARTIFACTS_DIR` yet. Likewise, `opencli` does not currently write a package-level `engine.trace.jsonl`; trace output is still the debug JSONL file configured by `OPENCLI_DEBUG_LOG_FILE`, and selector-learning persists its cache file via `OPENCLI_SELECTOR_CACHE_PATH`.
 
+If you want a shared engine-style layout today, you must wire it manually from the caller side. The sibling `mkt-learning-engine` package provides helpers for:
+
+- `baseDir/artifacts/...`
+- `baseDir/artifacts/traces/engine.trace.jsonl`
+- `baseDir/cache/...`
+
 **Load Source Browser Bridge Extension**
 
 1. Open `chrome://extensions` and enable **Developer mode** (top-right toggle).
