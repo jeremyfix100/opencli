@@ -108,6 +108,31 @@ npx skills add jackwener/opencli --skill opencli-oneshot     # Quick command ref
 git clone git@github.com:jackwener/opencli.git && cd opencli && npm install && npm run build && npm link
 ```
 
+**Local learning-engine dependency**
+
+`opencli` consumes selector-learning from the sibling `mkt-learning-engine` repository via a local file dependency:
+
+```json
+{
+  "dependencies": {
+    "mkt-learning-engine": "file:../mkt-learning-engine"
+  }
+}
+```
+
+After changing `mkt-learning-engine`, rebuild or reinstall `opencli` so the local dependency is refreshed.
+
+**Debug and trace flags currently supported by code**
+
+- `OPENCLI_DEBUG_PROVENANCE=1` - emits extra provenance/debug logging in site adapters that opt in
+- `OPENCLI_DEBUG_LOG_FILE=/tmp/opencli-debug.jsonl` - appends `traceDebug(...)` records as JSONL
+- `OPENCLI_SELECTOR_CACHE_PATH=/tmp/selector-learning-cache.json` - overrides the selector-learning cache location
+- `MKT_CRAWLER_LLM_ENDPOINT` - LLM endpoint used by selector-learning
+- `MKT_CRAWLER_LLM_API_KEY` - LLM API key used by selector-learning
+- `MKT_CRAWLER_LLM_MODEL` - LLM model used by selector-learning
+
+Current code does **not** read `OPENCLI_LEARNING_ARTIFACTS_DIR` yet. Likewise, `opencli` does not currently write a package-level `engine.trace.jsonl`; trace output is still the debug JSONL file configured by `OPENCLI_DEBUG_LOG_FILE`, and selector-learning persists its cache file via `OPENCLI_SELECTOR_CACHE_PATH`.
+
 **Load Source Browser Bridge Extension**
 
 1. Open `chrome://extensions` and enable **Developer mode** (top-right toggle).
