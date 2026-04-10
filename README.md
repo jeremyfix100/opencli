@@ -108,6 +108,8 @@ npx skills add jackwener/opencli --skill opencli-oneshot     # Quick command ref
 git clone git@github.com:jackwener/opencli.git && cd opencli && npm install && npm run build && npm link
 ```
 
+In the local multi-repo workspace, `opencli` now lives at `/Users/fix/Fixdoc/Program/mkt-project/opencli`. The sibling repositories `mkt-learning-engine` and `mkt-signal-core` also live under `/Users/fix/Fixdoc/Program/mkt-project`, while shared cross-project docs are managed in `/Users/fix/Fixdoc/Program/mkt-project/dev-docs`.
+
 **Local learning-engine dependency**
 
 `opencli` consumes selector-learning from the sibling `mkt-learning-engine` repository via a local file dependency:
