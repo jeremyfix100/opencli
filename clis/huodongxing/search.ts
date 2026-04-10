@@ -1,10 +1,16 @@
 import { AuthRequiredError, EmptyResultError } from '@jackwener/opencli/errors';
 import { cli, Strategy } from '@jackwener/opencli/registry';
 import { log } from '@jackwener/opencli/logger';
-import { buildDomFingerprint, collectDomLearningSnapshot } from '@jackwener/opencli/dom-distill';
+import {
+  buildDomFingerprint,
+  collectDomLearningSnapshot,
+  distillDomLearningCandidates,
+  type DomLearningSnapshot,
+} from '@jackwener/opencli/dom-distill';
 import { traceDebug } from '@jackwener/opencli/debug-trace';
 import {
   learnSelectorPlanFromSnapshot,
+  readSelectorLearningCache,
   type LearnedSelectorPlan,
 } from '@jackwener/opencli/selector-learning';
 
@@ -104,7 +110,95 @@ function isSelectorSetEmpty(value: LearnedSelectorCache | null): boolean {
   return Object.values(value).every((fieldPlan) => !fieldPlan || fieldPlan.selectors.length === 0);
 }
 
-async function learnSelectorsWithLlm(page: { evaluate: (js: string) => Promise<unknown> }, siteUrl: string): Promise<LlmLearnedSelectors | null> {
+function getLearningArtifactsBaseDir(): string | null {
+  const dir = process.env.OPENCLI_LEARNING_ARTIFACTS_DIR?.trim();
+  return dir ? dir : null;
+}
+
+function makeRunId(): string {
+  return 'hx_' + new Date().toISOString().replace(/[:.]/g, '-');
+}
+
+type LearningEngineModule = typeof import('mkt-learning-engine');
+
+let cachedLearningEngineModule: LearningEngineModule | null = null;
+async function loadLearningEngineForArtifacts(): Promise<LearningEngineModule> {
+  if (!cachedLearningEngineModule) {
+    cachedLearningEngineModule = await import('mkt-learning-engine');
+  }
+  return cachedLearningEngineModule;
+}
+
+async function safeWriteJson(le: LearningEngineModule, filePath: string, payload: unknown): Promise<void> {
+  try {
+    await le.writeArtifactJson(filePath, payload);
+  } catch {
+    // Must never break crawl path
+  }
+}
+
+async function safeAppendTrace(
+  le: LearningEngineModule,
+  filePath: string,
+  record: ReturnType<LearningEngineModule['createEngineTraceEvent']>,
+): Promise<void> {
+  try {
+    await le.appendEngineTraceEvent(filePath, record);
+  } catch {
+    // Must never break crawl path
+  }
+}
+
+async function hadSelectorLearningCacheHit(fingerprint: string): Promise<boolean> {
+  const cache = await readSelectorLearningCache();
+  if (!cache) return false;
+  if (cache.plans?.[fingerprint] != null) return true;
+  if (cache.entries?.[fingerprint] != null) return true;
+  return false;
+}
+
+type LearningArtifactPaths = {
+  root: string;
+  rawPage: string;
+  domDistill: string;
+  selectorPlan: string;
+  extractionResult: string;
+  qualityReport: string;
+  engineTraceJsonl: string;
+};
+
+type ArtifactWireState = {
+  baseDir: string;
+  runId: string;
+  bufferedSample: {
+    targetUrl: string;
+    limit: number;
+    startedAt: string;
+    authRequired?: boolean | null;
+    rawItemsCount?: number | null;
+    normalizedRowsCount?: number | null;
+  };
+  pageKey: string | null;
+  artifactPaths: LearningArtifactPaths | null;
+  domFingerprint: string | null;
+};
+
+type ArtifactLearningHooks = {
+  le: LearningEngineModule;
+  ensureArtifactPaths: (input: { rowUrl: string; snapshot?: DomLearningSnapshot }) => Promise<void>;
+  getArtifactWire: () => {
+    runId: string;
+    pageKey: string | null;
+    artifactPaths: LearningArtifactPaths | null;
+    domFingerprint: string | null;
+  };
+};
+
+async function learnSelectorsWithLlm(
+  page: { evaluate: (js: string) => Promise<unknown> },
+  siteUrl: string,
+  hooks?: ArtifactLearningHooks | null,
+): Promise<LlmLearnedSelectors | null> {
   if (!canUseLlmLearning()) return null;
   if (process.env.OPENCLI_VERBOSE || process.env.DEBUG?.includes('opencli')) {
     process.stderr.write(`[huodongxing/search] llm learning attempt siteUrl=${siteUrl}\n`);
@@ -120,11 +214,158 @@ async function learnSelectorsWithLlm(page: { evaluate: (js: string) => Promise<u
     fingerprint: fingerprint.slice(0, 8),
     candidateCount: snapshot.candidates.length,
   });
+
+  if (hooks?.ensureArtifactPaths) {
+    await hooks.ensureArtifactPaths({ rowUrl: siteUrl, snapshot });
+  }
+  const w = hooks?.getArtifactWire?.();
+  const leMod = hooks?.le;
+  if (w?.artifactPaths && w.pageKey && w.domFingerprint && w.runId && leMod) {
+    const distilled = distillDomLearningCandidates(snapshot.candidates, {
+      maxCandidates: 60,
+      maxPerField: 8,
+    });
+    await safeAppendTrace(
+      leMod,
+      w.artifactPaths.engineTraceJsonl,
+      leMod.createEngineTraceEvent({
+        run_id: w.runId,
+        site: 'huodongxing',
+        url: snapshot.url || siteUrl,
+        page_key: w.pageKey,
+        stage: 'dom_distill',
+        event: 'distill-start',
+        status: 'started',
+        cache_status: 'na',
+        input_summary: { candidate_count: snapshot.candidates.length },
+        output_summary: undefined,
+        error: null,
+      }),
+    );
+    await safeWriteJson(leMod, w.artifactPaths.domDistill, { ...distilled, dom_fingerprint: w.domFingerprint });
+    await safeAppendTrace(
+      leMod,
+      w.artifactPaths.engineTraceJsonl,
+      leMod.createEngineTraceEvent({
+        run_id: w.runId,
+        site: 'huodongxing',
+        url: snapshot.url || siteUrl,
+        page_key: w.pageKey,
+        stage: 'dom_distill',
+        event: 'distill-succeeded',
+        status: 'succeeded',
+        cache_status: 'na',
+        input_summary: undefined,
+        output_summary: {
+          kept_candidates: distilled.summary.keptCandidates,
+          total_candidates: distilled.summary.totalCandidates,
+        },
+        error: null,
+      }),
+    );
+  }
+
+  const cacheHit = hooks ? await hadSelectorLearningCacheHit(fingerprint) : false;
   const learned = await learnSelectorPlanFromSnapshot({
     site: 'huodongxing',
     fingerprint,
     snapshot,
   });
+
+  if (w?.artifactPaths && w.pageKey && w.runId && leMod) {
+    if (cacheHit) {
+      await safeAppendTrace(
+        leMod,
+        w.artifactPaths.engineTraceJsonl,
+        leMod.createEngineTraceEvent({
+          run_id: w.runId,
+          site: 'huodongxing',
+          url: siteUrl,
+          page_key: w.pageKey,
+          stage: 'cache',
+          event: 'cache-hit',
+          status: 'succeeded',
+          cache_status: 'hit',
+          input_summary: undefined,
+          output_summary: undefined,
+          error: null,
+        }),
+      );
+    } else {
+      await safeAppendTrace(
+        leMod,
+        w.artifactPaths.engineTraceJsonl,
+        leMod.createEngineTraceEvent({
+          run_id: w.runId,
+          site: 'huodongxing',
+          url: siteUrl,
+          page_key: w.pageKey,
+          stage: 'cache',
+          event: 'cache-miss',
+          status: 'succeeded',
+          cache_status: 'miss',
+          input_summary: undefined,
+          output_summary: undefined,
+          error: null,
+        }),
+      );
+      await safeAppendTrace(
+        leMod,
+        w.artifactPaths.engineTraceJsonl,
+        leMod.createEngineTraceEvent({
+          run_id: w.runId,
+          site: 'huodongxing',
+          url: siteUrl,
+          page_key: w.pageKey,
+          stage: 'llm_requested',
+          event: 'llm_requested',
+          status: 'started',
+          cache_status: 'miss',
+          input_summary: undefined,
+          output_summary: undefined,
+          error: null,
+        }),
+      );
+      await safeAppendTrace(
+        leMod,
+        w.artifactPaths.engineTraceJsonl,
+        leMod.createEngineTraceEvent({
+          run_id: w.runId,
+          site: 'huodongxing',
+          url: siteUrl,
+          page_key: w.pageKey,
+          stage: 'llm_requested',
+          event: learned ? 'llm_succeeded' : 'llm_failed',
+          status: learned ? 'succeeded' : 'failed',
+          cache_status: 'miss',
+          input_summary: undefined,
+          output_summary: undefined,
+          error: learned ? null : { type: 'llm_failed', message: 'selector plan is null' },
+        }),
+      );
+    }
+    if (learned) {
+      await safeWriteJson(leMod, w.artifactPaths.selectorPlan, learned);
+      await safeAppendTrace(
+        leMod,
+        w.artifactPaths.engineTraceJsonl,
+        leMod.createEngineTraceEvent({
+          run_id: w.runId,
+          site: 'huodongxing',
+          url: siteUrl,
+          page_key: w.pageKey,
+          stage: 'rule_generated',
+          event: 'rule_generated',
+          status: 'succeeded',
+          cache_status: cacheHit ? 'hit' : 'miss',
+          input_summary: undefined,
+          output_summary: { fields: Object.keys(learned) },
+          error: null,
+        }),
+      );
+    }
+  }
+
   if (process.env.OPENCLI_VERBOSE || process.env.DEBUG?.includes('opencli')) {
     process.stderr.write(
       `[huodongxing/search] llm learning result=${learned ? 'hit' : 'miss'} fingerprint=${fingerprint.slice(0, 8)}\n`,
@@ -151,6 +392,39 @@ function normalizeFieldProvenance(value: unknown): FieldProvenance | null {
     confidence: typeof record.confidence === 'number' ? record.confidence : null,
     reason: record.reason == null ? null : String(record.reason),
   };
+}
+
+function isFallbackLikeDetailStrategy(strategy: string): boolean {
+  const s = strategy.trim();
+  if (s === 'detail_fallback' || s === 'missing') return true;
+  if (s.startsWith('heuristic_')) return true;
+  return false;
+}
+
+/** Fields in evaluate `provenance` that used fallback / heuristic / missing (per spec §6.3). */
+function collectFallbackUsedFields(detailProvenance: Record<string, unknown>): {
+  fields: string[];
+  strategy_counts: Record<string, number>;
+} {
+  const fields: string[] = [];
+  const strategy_counts: Record<string, number> = {};
+  for (const [field, raw] of Object.entries(detailProvenance)) {
+    const norm = normalizeFieldProvenance(raw);
+    const strategy = norm?.strategy ?? '';
+    if (strategy) {
+      strategy_counts[strategy] = (strategy_counts[strategy] ?? 0) + 1;
+      if (isFallbackLikeDetailStrategy(strategy)) fields.push(field);
+    }
+  }
+  return { fields, strategy_counts };
+}
+
+function ruleExecutionKeyFieldsOutcome(row: HuodongxingRow): 'succeeded' | 'partial' | 'failed' {
+  const titleOk = Boolean(row.title && String(row.title).trim());
+  const organizerOk = Boolean(row.organizer && String(row.organizer).trim());
+  if (titleOk && organizerOk) return 'succeeded';
+  if (!titleOk && !organizerOk) return 'failed';
+  return 'partial';
 }
 
 function attachProvenance(row: HuodongxingRow, field: string, provenance: FieldProvenance | null): void {
@@ -350,6 +624,102 @@ cli({
   func: async (page, kwargs) => {
     const limit = normalizeLimit(kwargs.limit);
     const targetUrl = resolveSearchUrl(kwargs.query_or_url);
+    const artifactsBaseDir = getLearningArtifactsBaseDir();
+    const runId = artifactsBaseDir ? makeRunId() : null;
+    const bufferedSample: ArtifactWireState['bufferedSample'] = {
+      targetUrl,
+      limit,
+      startedAt: new Date().toISOString(),
+    };
+    const artifactWire: ArtifactWireState | null =
+      artifactsBaseDir && runId
+        ? {
+            baseDir: artifactsBaseDir,
+            runId,
+            bufferedSample,
+            pageKey: null,
+            artifactPaths: null,
+            domFingerprint: null,
+          }
+        : null;
+    const le = artifactsBaseDir ? await loadLearningEngineForArtifacts() : null;
+
+    async function ensureArtifactPaths(input: { rowUrl: string; snapshot?: DomLearningSnapshot }): Promise<void> {
+      if (!artifactWire?.baseDir || !artifactWire.runId || !le) return;
+      if (artifactWire.artifactPaths && artifactWire.pageKey && artifactWire.domFingerprint) return;
+
+      let fp: string | null = null;
+      if (input.snapshot && typeof input.snapshot === 'object') {
+        const snap = input.snapshot;
+        const urlForFp = typeof snap.url === 'string' && snap.url ? snap.url : input.rowUrl;
+        const candidates = Array.isArray(snap.candidates) ? snap.candidates : [];
+        fp = buildDomFingerprint({ url: urlForFp, candidates });
+      }
+      if (!fp) {
+        fp = 'domfp_' + new Date().toISOString().replace(/[:.]/g, '-');
+      }
+      artifactWire.domFingerprint = fp;
+      artifactWire.pageKey = 'unknown:' + fp;
+      artifactWire.artifactPaths = le.buildLearningArtifactPaths({
+        baseDir: artifactWire.baseDir,
+        site: 'huodongxing',
+        runId: artifactWire.runId,
+        pageKey: artifactWire.pageKey,
+      });
+
+      const paths = artifactWire.artifactPaths;
+      const bs = artifactWire.bufferedSample;
+
+      await safeWriteJson(le, paths.rawPage, {
+        targetUrl: bs.targetUrl,
+        limit: bs.limit,
+        authRequired: bs.authRequired ?? null,
+        rawItemsCount: bs.rawItemsCount ?? null,
+        normalizedRowsCount: bs.normalizedRowsCount ?? null,
+      });
+      await safeAppendTrace(
+        le,
+        paths.engineTraceJsonl,
+        le.createEngineTraceEvent({
+          run_id: artifactWire.runId,
+          site: 'huodongxing',
+          url: bs.targetUrl,
+          page_key: artifactWire.pageKey,
+          stage: 'sample',
+          event: 'sample-start',
+          status: 'started',
+          cache_status: 'na',
+          input_summary: { limit: bs.limit },
+          output_summary: undefined,
+          error: null,
+        }),
+      );
+
+      if (bs.rawItemsCount != null || bs.normalizedRowsCount != null) {
+        await safeAppendTrace(
+          le,
+          paths.engineTraceJsonl,
+          le.createEngineTraceEvent({
+            run_id: artifactWire.runId,
+            site: 'huodongxing',
+            url: bs.targetUrl,
+            page_key: artifactWire.pageKey,
+            stage: 'sample',
+            event: 'sample-succeeded',
+            status: 'succeeded',
+            cache_status: 'na',
+            input_summary: undefined,
+            output_summary: {
+              raw_items: bs.rawItemsCount ?? null,
+              normalized_rows: bs.normalizedRowsCount ?? null,
+              auth_required: bs.authRequired ?? null,
+            },
+            error: null,
+          }),
+        );
+      }
+    }
+
     log.info(`[huodongxing/search] start url=${targetUrl} limit=${limit}`);
     log.info(`[huodongxing/search] llm env=${canUseLlmLearning() ? 'enabled' : 'disabled'}`);
     traceDebug('huodongxing/search', 'start', { targetUrl, limit, llmEnabled: canUseLlmLearning() });
@@ -457,6 +827,12 @@ cli({
       normalizedRows: items.length,
     });
 
+    if (artifactWire) {
+      artifactWire.bufferedSample.authRequired = Boolean(payload?.authRequired);
+      artifactWire.bufferedSample.rawItemsCount = rawItems.length;
+      artifactWire.bufferedSample.normalizedRowsCount = items.length;
+    }
+
     if (payload?.authRequired && items.length === 0) {
       throw new AuthRequiredError(DOMAIN, 'AuthRequired: huodongxing/search requires login or passed verification');
     }
@@ -470,6 +846,19 @@ cli({
     for (const row of items) {
       if (!row.url) continue;
       try {
+        let didArtifactWarmupGoto = false;
+        if (artifactWire && !artifactWire.artifactPaths && row.url && !canUseLlmLearning()) {
+          await page.goto(row.url);
+          try {
+            await page.wait(1);
+          } catch {
+            // Best effort only
+          }
+          const snapshot = await collectDomLearningSnapshot(page);
+          await ensureArtifactPaths({ rowUrl: row.url, snapshot });
+          didArtifactWarmupGoto = true;
+        }
+
         if (!learnedSelectors && canUseLlmLearning()) {
           log.info(`[huodongxing/search] learning selectors from first detail row=${row.url}`);
           traceDebug('huodongxing/search', 'learn-selectors-branch', { rowUrl: row.url });
@@ -479,7 +868,22 @@ cli({
           } catch {
             // Best effort only
           }
-          learnedSelectors = await learnSelectorsWithLlm(page, row.url);
+          learnedSelectors = await learnSelectorsWithLlm(
+            page,
+            row.url,
+            artifactWire && le
+              ? {
+                  le,
+                  ensureArtifactPaths,
+                  getArtifactWire: () => ({
+                    runId: artifactWire.runId,
+                    pageKey: artifactWire.pageKey,
+                    artifactPaths: artifactWire.artifactPaths,
+                    domFingerprint: artifactWire.domFingerprint,
+                  }),
+                }
+              : undefined,
+          );
           log.info(
             `[huodongxing/search] selector learning result=${learnedSelectors ? 'hit' : 'miss'} row=${row.url}`,
           );
@@ -489,7 +893,7 @@ cli({
         log.verbose(`[huodongxing/search] enrich detail row=${row.url} learned=${Boolean(learnedSelectors)}`);
         traceDebug('huodongxing/search', 'detail-start', { rowUrl: row.url, learned: Boolean(learnedSelectors) });
         const detail = await enrichHuodongxingDetail(page, row.url, learnedSelectors, {
-          skipGoto: Boolean(learnedSelectors),
+          skipGoto: Boolean(learnedSelectors) || didArtifactWarmupGoto,
         });
         const detailTitle = typeof detail.title === 'string' ? detail.title : null;
         const detailPublishedAt = typeof detail.published_at === 'string' ? detail.published_at : null;
@@ -544,6 +948,153 @@ cli({
             signupCount: detailSignupCount,
           };
         }
+
+        if (artifactWire?.artifactPaths && artifactWire.pageKey && artifactWire.runId && le) {
+          await safeAppendTrace(
+            le,
+            artifactWire.artifactPaths.engineTraceJsonl,
+            le.createEngineTraceEvent({
+              run_id: artifactWire.runId,
+              site: 'huodongxing',
+              url: row.url!,
+              page_key: artifactWire.pageKey,
+              stage: 'rule_execution',
+              event: 'rule_execution_started',
+              status: 'started',
+              cache_status: 'na',
+              input_summary: { learned: Boolean(learnedSelectors) },
+              output_summary: undefined,
+              error: null,
+            }),
+          );
+
+          const fallbackMeta = collectFallbackUsedFields(detailProvenanceRecord);
+          if (fallbackMeta.fields.length > 0) {
+            await safeAppendTrace(
+              le,
+              artifactWire.artifactPaths.engineTraceJsonl,
+              le.createEngineTraceEvent({
+                run_id: artifactWire.runId,
+                site: 'huodongxing',
+                url: row.url!,
+                page_key: artifactWire.pageKey,
+                stage: 'rule_execution',
+                event: 'fallback_used',
+                status: 'succeeded',
+                cache_status: 'na',
+                input_summary: undefined,
+                output_summary: {
+                  fields: fallbackMeta.fields,
+                  strategy_counts: fallbackMeta.strategy_counts,
+                },
+                error: null,
+              }),
+            );
+          }
+
+          const keyOutcome = ruleExecutionKeyFieldsOutcome(row);
+          const outcomeEvent =
+            keyOutcome === 'succeeded'
+              ? 'rule_execution_succeeded'
+              : keyOutcome === 'partial'
+                ? 'rule_execution_partial'
+                : 'rule_execution_failed';
+          const outcomeStatus: 'succeeded' | 'failed' = keyOutcome === 'failed' ? 'failed' : 'succeeded';
+          await safeAppendTrace(
+            le,
+            artifactWire.artifactPaths.engineTraceJsonl,
+            le.createEngineTraceEvent({
+              run_id: artifactWire.runId,
+              site: 'huodongxing',
+              url: row.url!,
+              page_key: artifactWire.pageKey,
+              stage: 'rule_execution',
+              event: outcomeEvent,
+              status: outcomeStatus,
+              cache_status: 'na',
+              input_summary: undefined,
+              output_summary: {
+                title_present: Boolean(row.title && String(row.title).trim()),
+                organizer_present: Boolean(row.organizer && String(row.organizer).trim()),
+              },
+              error:
+                keyOutcome === 'failed'
+                  ? { type: 'key_fields_missing', message: 'title and organizer both missing after detail enrich' }
+                  : null,
+            }),
+          );
+
+          await safeWriteJson(le, artifactWire.artifactPaths.extractionResult, { rowUrl: row.url, detail });
+
+          const provenanceForQuality = row.provenance ?? {};
+          const organizerP = provenanceForQuality.organizer as FieldProvenance | undefined;
+          const organizerRejected = Boolean(organizerP && organizerP.strategy === 'rejected_noise');
+          const organizerMissing = !row.organizer;
+          const rejected = organizerRejected || organizerMissing;
+
+          await safeWriteJson(le, artifactWire.artifactPaths.qualityReport, {
+            rowUrl: row.url,
+            fields: [
+              {
+                field: 'organizer',
+                status: organizerRejected ? 'rejected_noise' : organizerMissing ? 'missing' : 'accepted',
+                reason: organizerRejected ? 'noise_text' : organizerMissing ? 'missing' : 'ok',
+                raw_value: organizerP?.matched_text ?? null,
+                normalized_value: row.organizer ?? null,
+                provenance_strategy: organizerP?.strategy ?? null,
+              },
+            ],
+          });
+          const organizerQualityReason: 'ok' | 'missing' | 'rejected_noise' = organizerRejected
+            ? 'rejected_noise'
+            : organizerMissing
+              ? 'missing'
+              : 'ok';
+          await safeAppendTrace(
+            le,
+            artifactWire.artifactPaths.engineTraceJsonl,
+            le.createEngineTraceEvent({
+              run_id: artifactWire.runId,
+              site: 'huodongxing',
+              url: row.url!,
+              page_key: artifactWire.pageKey,
+              stage: 'quality_check',
+              event: 'quality-check',
+              status: 'succeeded',
+              cache_status: 'na',
+              input_summary: undefined,
+              output_summary: {
+                organizer_rejected: organizerRejected,
+                organizer_missing: organizerMissing,
+                reason: organizerQualityReason,
+              },
+              error: null,
+            }),
+          );
+          if (rejected) {
+            const qualityRejectedReason: 'missing' | 'rejected_noise' = organizerRejected
+              ? 'rejected_noise'
+              : 'missing';
+            await safeAppendTrace(
+              le,
+              artifactWire.artifactPaths.engineTraceJsonl,
+              le.createEngineTraceEvent({
+                run_id: artifactWire.runId,
+                site: 'huodongxing',
+                url: row.url!,
+                page_key: artifactWire.pageKey,
+                stage: 'quality_check',
+                event: 'quality_rejected',
+                status: 'succeeded',
+                cache_status: 'na',
+                input_summary: undefined,
+                output_summary: { field: 'organizer', reason: qualityRejectedReason },
+                error: null,
+              }),
+            );
+          }
+        }
+
         traceDebug('huodongxing/search', 'detail-result', {
           rowUrl: row.url,
           title: row.title,
@@ -562,6 +1113,26 @@ cli({
           rowUrl: row.url,
           error: error instanceof Error ? error.message : String(error),
         });
+        if (artifactWire?.artifactPaths && artifactWire.pageKey && artifactWire.runId && le && row.url) {
+          const message = error instanceof Error ? error.message : String(error);
+          await safeAppendTrace(
+            le,
+            artifactWire.artifactPaths.engineTraceJsonl,
+            le.createEngineTraceEvent({
+              run_id: artifactWire.runId,
+              site: 'huodongxing',
+              url: row.url,
+              page_key: artifactWire.pageKey,
+              stage: 'rule_execution',
+              event: 'rule_execution_failed',
+              status: 'failed',
+              cache_status: 'na',
+              input_summary: { learned: Boolean(learnedSelectors) },
+              output_summary: undefined,
+              error: { type: 'detail_enrichment_failed', message },
+            }),
+          );
+        }
       }
     }
 
@@ -580,6 +1151,27 @@ cli({
     }
 
     log.info(`[huodongxing/search] done rows=${items.length}`);
+
+    if (artifactWire?.artifactPaths && artifactWire.pageKey && artifactWire.runId && le) {
+      await safeAppendTrace(
+        le,
+        artifactWire.artifactPaths.engineTraceJsonl,
+        le.createEngineTraceEvent({
+          run_id: artifactWire.runId,
+          site: 'huodongxing',
+          url: bufferedSample.targetUrl,
+          page_key: artifactWire.pageKey,
+          stage: 'completed',
+          event: 'completed',
+          status: 'succeeded',
+          cache_status: 'na',
+          input_summary: undefined,
+          output_summary: { rows: items.length },
+          error: null,
+        }),
+      );
+    }
+
     return items;
   },
 });
