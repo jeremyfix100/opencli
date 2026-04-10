@@ -1,7 +1,8 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import os from 'node:os';
 import path from 'node:path';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdtemp, readFile, readdir, stat } from 'node:fs/promises';
 import type { CliCommand } from '@jackwener/opencli/registry';
 import { getRegistry } from '@jackwener/opencli/registry';
 import type { IPage } from '@jackwener/opencli/types';
@@ -50,6 +51,145 @@ afterEach(() => {
 });
 
 describe('huodongxing/search', () => {
+  it('writes learning artifacts + engine trace when OPENCLI_LEARNING_ARTIFACTS_DIR is set (LLM disabled)', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'opencli-learning-artifacts-'));
+    vi.stubEnv('OPENCLI_LEARNING_ARTIFACTS_DIR', dir);
+
+    const page = createPage([
+      {
+        authRequired: false,
+        items: [{ title: '活动', url: '/event/1', author: null, published_at: null, raw_id: '1', engagement: {} }],
+      },
+      {
+        url: 'https://www.huodongxing.com/event/1',
+        title: '活动',
+        candidates: [{ selector: 'h1', text: '活动', tag: 'h1' }],
+      },
+      {
+        title: '活动',
+        organizer: '主办方',
+        author: '主办方',
+        event_time: '2026-04-08 19:00',
+        location: 'Shanghai',
+        fee: '免费',
+        published_at: '2026-04-08T19:00:00+08:00',
+        raw_id: '1',
+        signupCount: 1,
+        provenance: {
+          title: { strategy: 'detail_fallback', selector: 'h1', matched_text: '活动', confidence: null, reason: null },
+          organizer: { strategy: 'detail_fallback', selector: '.org', matched_text: '主办方', confidence: null, reason: null },
+          event_time: { strategy: 'detail_fallback', selector: 'time', matched_text: '2026-04-08 19:00', confidence: null, reason: null },
+          location: { strategy: 'detail_fallback', selector: '.loc', matched_text: 'Shanghai', confidence: null, reason: null },
+          fee: { strategy: 'detail_fallback', selector: '.fee', matched_text: '免费', confidence: null, reason: null },
+          signup_text: { strategy: 'heuristic_regex', selector: 'body', matched_text: '1', confidence: null, reason: null },
+        },
+      },
+    ]);
+
+    await cmd.func!(page, { query_or_url: '活动', limit: 20 });
+
+    const artifactsSiteDir = path.join(dir, 'artifacts', 'huodongxing');
+    expect(existsSync(artifactsSiteDir)).toBe(true);
+
+    const runs = await readdir(artifactsSiteDir);
+    expect(runs.length).toBe(1);
+    const runDir = path.join(artifactsSiteDir, runs[0]);
+    const pages = await readdir(runDir);
+    expect(pages.length).toBe(1);
+    const pageDir = path.join(runDir, pages[0]);
+
+    await expect(stat(path.join(pageDir, 'raw-page.json'))).resolves.toBeDefined();
+    await expect(stat(path.join(pageDir, 'extraction-result.json'))).resolves.toBeDefined();
+    await expect(stat(path.join(pageDir, 'quality-report.json'))).resolves.toBeDefined();
+    await expect(stat(path.join(pageDir, 'trace', 'engine.trace.jsonl'))).resolves.toBeDefined();
+
+    const traceRaw = await readFile(path.join(pageDir, 'trace', 'engine.trace.jsonl'), 'utf-8');
+    expect(traceRaw).toContain('"event":"sample-start"');
+    expect(traceRaw).toContain('"event":"completed"');
+    expect(traceRaw).not.toContain('"event":"llm_succeeded"');
+    expect(traceRaw).toContain('"event":"fallback_used"');
+    expect(traceRaw).toMatch(/"event":"rule_execution_(succeeded|partial)"/);
+  });
+
+  it('writes selector-plan artifact and llm events when LLM is enabled', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'opencli-learning-artifacts-'));
+    vi.stubEnv('OPENCLI_LEARNING_ARTIFACTS_DIR', dir);
+    vi.stubEnv('OPENCLI_SELECTOR_CACHE_PATH', path.join(dir, 'selector-cache.json'));
+    vi.stubEnv('MKT_CRAWLER_LLM_ENDPOINT', 'https://example.com/v1/chat/completions');
+    vi.stubEnv('MKT_CRAWLER_LLM_API_KEY', 'sk-test');
+    vi.stubEnv('MKT_CRAWLER_LLM_MODEL', 'MiniMax-M2.5');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                plans: [
+                  { field: 'title', selectors: ['h1'], fallback_selectors: [], confidence: 0.9, reason: 't' },
+                  { field: 'organizer', selectors: ['.org'], fallback_selectors: [], confidence: 0.9, reason: 'o' },
+                  { field: 'event_time', selectors: [], fallback_selectors: [], confidence: 0.1, reason: 'x' },
+                  { field: 'location', selectors: [], fallback_selectors: [], confidence: 0.1, reason: 'x' },
+                  { field: 'fee', selectors: [], fallback_selectors: [], confidence: 0.1, reason: 'x' },
+                  { field: 'signup_text', selectors: [], fallback_selectors: [], confidence: 0.1, reason: 'x' },
+                ],
+              }),
+            },
+          },
+        ],
+      }),
+    }));
+
+    const page = createPage([
+      {
+        authRequired: false,
+        items: [{ title: '活动', url: '/event/1', author: null, published_at: null, raw_id: '1', engagement: {} }],
+      },
+      {
+        url: 'https://www.huodongxing.com/event/1',
+        title: '活动',
+        candidates: [{ selector: 'h1', text: '活动', tag: 'h1' }],
+      },
+      {
+        title: '活动',
+        organizer: '主办方',
+        author: '主办方',
+        event_time: '2026-04-08 19:00',
+        location: 'Shanghai',
+        fee: '免费',
+        published_at: '2026-04-08T19:00:00+08:00',
+        raw_id: '1',
+        signupCount: 1,
+        provenance: {
+          title: { strategy: 'llm_selector', selector: 'h1', matched_text: '活动', confidence: 0.9, reason: 't' },
+          organizer: { strategy: 'llm_selector', selector: '.org', matched_text: '主办方', confidence: 0.9, reason: 'o' },
+          event_time: { strategy: 'detail_fallback', selector: 'time', matched_text: '2026-04-08 19:00', confidence: null, reason: null },
+          location: { strategy: 'detail_fallback', selector: '.addr', matched_text: 'Shanghai', confidence: null, reason: null },
+          fee: { strategy: 'detail_fallback', selector: '.fee', matched_text: '免费', confidence: null, reason: null },
+          signup_text: { strategy: 'heuristic_regex', selector: 'body', matched_text: '1', confidence: null, reason: null },
+        },
+      },
+    ]);
+
+    await cmd.func!(page, { query_or_url: '活动', limit: 20 });
+
+    const artifactsSiteDir = path.join(dir, 'artifacts', 'huodongxing');
+    const runs = await readdir(artifactsSiteDir);
+    const runDir = path.join(artifactsSiteDir, runs[0]);
+    const pages = await readdir(runDir);
+    const pageDir = path.join(runDir, pages[0]);
+
+    await expect(stat(path.join(pageDir, 'selector-plan.json'))).resolves.toBeDefined();
+    await expect(stat(path.join(pageDir, 'dom-distill.json'))).resolves.toBeDefined();
+
+    const traceRaw = await readFile(path.join(pageDir, 'trace', 'engine.trace.jsonl'), 'utf-8');
+    expect(traceRaw).toContain('"event":"cache-miss"');
+    expect(traceRaw).toContain('"event":"llm_requested"');
+    expect(traceRaw).toContain('"event":"llm_succeeded"');
+    expect(traceRaw).toContain('"event":"rule_generated"');
+    expect(traceRaw).toMatch(/"event":"rule_execution_(succeeded|partial)"/);
+  });
+
   it('writes debug traces for the learning path when LLM is enabled', async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'opencli-search-trace-'));
     const file = path.join(dir, 'trace.jsonl');
