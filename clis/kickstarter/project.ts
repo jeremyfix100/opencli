@@ -57,6 +57,21 @@ function getLearningModeFromEnv(): 'auto' | 'llm_only' | 'heuristic_only' | unde
   return undefined;
 }
 
+function isOpencliSchemaFirst(): boolean {
+  return process.env.OPENCLI_SCHEMA_FIRST?.trim() === '1';
+}
+
+function getKickstarterSchemaRegistryPath(): string {
+  const overridden = process.env.OPENCLI_KICKSTARTER_SCHEMA_REGISTRY_PATH?.trim();
+  if (overridden) return overridden;
+  return path.join(os.homedir(), '.opencli', 'kickstarter-core-schema.json');
+}
+
+function getSchemaHintPromptFromEnv(): string | undefined {
+  const raw = process.env.OPENCLI_KICKSTARTER_SCHEMA_HINT_PROMPT?.trim();
+  return raw ? raw : undefined;
+}
+
 function makeRunId(): string {
   return 'ks_' + new Date().toISOString().replace(/[:.]/g, '-');
 }
@@ -208,47 +223,75 @@ cli({
     const cacheFilePath = getRuleCacheFilePath();
     const llm = getLlmConfigFromEnv();
     const learning_mode = getLearningModeFromEnv();
-    let learningRes: Awaited<
-      ReturnType<(typeof import('mkt-learning-engine'))['getOrLearnSelectorPlanFromHtmlSnapshotsV1']>
-    >;
+    type EngineMod = typeof import('mkt-learning-engine');
+    type LearningRes = Awaited<ReturnType<EngineMod['getOrLearnSelectorPlanFromHtmlSnapshotsV1']>>;
+    let learningRes: LearningRes;
     try {
-      learningRes = await engine.getOrLearnSelectorPlanFromHtmlSnapshotsV1({
-        cacheFilePath,
-        site: 'kickstarter',
-        page_type: pageType,
-        url,
-        url_pattern: urlPattern,
-        schema_version: 'v1',
-        prompt_version: 'page_understanding_v1',
-        core_schema: [
-          { field: 'title', value_type: 'text', required: true },
-          { field: 'url', value_type: 'url', required: false },
-          { field: 'raw_id', value_type: 'text', required: false },
-          // KPI-ish fields (V1: keep as text; normalization can be added later)
-          { field: 'creator_name', value_type: 'text', required: false },
-          { field: 'category', value_type: 'text', required: false },
-          { field: 'location', value_type: 'text', required: false },
-          { field: 'blurb', value_type: 'text', required: false },
-          { field: 'backers', value_type: 'text', required: true },
-          { field: 'pledged_amount', value_type: 'text', required: true },
-          { field: 'goal_amount', value_type: 'text', required: true },
-          { field: 'percent_funded', value_type: 'text', required: true },
-          { field: 'currency', value_type: 'text', required: false },
-          { field: 'deadline', value_type: 'text', required: false },
-        ],
-        html_snapshots,
-        learning_mode,
-        llm,
-        fetchImpl: fetch,
-      });
+      if (isOpencliSchemaFirst()) {
+        const schemaRegistryFilePath = getKickstarterSchemaRegistryPath();
+        const schema_hint_prompt = getSchemaHintPromptFromEnv();
+        learningRes = await engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1({
+          schemaRegistryFilePath,
+          selectorCacheFilePath: cacheFilePath,
+          site: 'kickstarter',
+          page_type: pageType,
+          url,
+          url_pattern: urlPattern,
+          schema_version: 'v1',
+          prompt_version: 'page_understanding_v1',
+          ...(schema_hint_prompt !== undefined ? { schema_hint_prompt } : {}),
+          html_snapshots,
+          learning_mode,
+          llm,
+          fetchImpl: fetch,
+        });
+      } else {
+        learningRes = await engine.getOrLearnSelectorPlanFromHtmlSnapshotsV1({
+          cacheFilePath,
+          site: 'kickstarter',
+          page_type: pageType,
+          url,
+          url_pattern: urlPattern,
+          schema_version: 'v1',
+          prompt_version: 'page_understanding_v1',
+          core_schema: [
+            { field: 'title', value_type: 'text', required: true },
+            { field: 'url', value_type: 'url', required: false },
+            { field: 'raw_id', value_type: 'text', required: false },
+            // KPI-ish fields (V1: keep as text; normalization can be added later)
+            { field: 'creator_name', value_type: 'text', required: false },
+            { field: 'category', value_type: 'text', required: false },
+            { field: 'location', value_type: 'text', required: false },
+            { field: 'blurb', value_type: 'text', required: false },
+            { field: 'backers', value_type: 'text', required: true },
+            { field: 'pledged_amount', value_type: 'text', required: true },
+            { field: 'goal_amount', value_type: 'text', required: true },
+            { field: 'percent_funded', value_type: 'text', required: true },
+            { field: 'currency', value_type: 'text', required: false },
+            { field: 'deadline', value_type: 'text', required: false },
+          ],
+          html_snapshots,
+          learning_mode,
+          llm,
+          fetchImpl: fetch,
+        });
+      }
     } catch (e) {
       if (artifactPaths && runId) {
         const err = e instanceof Error ? e : new Error(String(e));
         const isLlmUnavailable = e instanceof engine.LlmUnavailableError;
+        const isSchemaLlmUnavailable =
+          typeof (engine as any).SchemaLlmUnavailableError === 'function' &&
+          e instanceof (engine as any).SchemaLlmUnavailableError;
         const isCacheRead = e instanceof engine.RuleCacheReadError;
-        const errorType = isLlmUnavailable ? 'llm_unavailable' : isCacheRead ? e.type : 'unknown';
-        const errorCode =
-          isLlmUnavailable && typeof (e as any).code === 'string' ? (e as any).code : undefined;
+        const errorType = isLlmUnavailable
+          ? 'llm_unavailable'
+          : isSchemaLlmUnavailable
+            ? 'schema_llm_unavailable'
+            : isCacheRead
+              ? e.type
+              : 'unknown';
+        const errorCode = typeof (e as any)?.code === 'string' ? (e as any).code : undefined;
 
         await safeAppendTrace(
           engine,
@@ -400,10 +443,11 @@ cli({
     if (artifactPaths && runId) {
       await safeWriteJson(engine, artifactPaths.selectorPlan, {
         cache_status: learningRes.cache_status,
-        learning_method: (learningRes as any).learning_method,
-        llm_model: (learningRes as any).llm_model,
+        learning_method: learningRes.learning_method,
+        llm_model: learningRes.llm_model,
         dom_fingerprint: learningRes.dom_fingerprint,
         used_snapshot_key: learningRes.used_snapshot_key,
+        snapshot_summaries: learningRes.snapshot_summaries,
         selector_plan: selectorPlanForEval,
       });
       await safeWriteJson(engine, artifactPaths.extractionResult, row);

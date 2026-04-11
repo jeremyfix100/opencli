@@ -25,11 +25,23 @@ vi.mock('mkt-learning-engine', () => {
     }
   }
 
+  class SchemaLlmUnavailableError extends Error {
+    readonly code = 'schema_cache_miss_and_llm_unavailable' as const;
+    constructor(message: string) {
+      super(message);
+      this.name = 'SchemaLlmUnavailableError';
+    }
+  }
+
   return {
     getOrLearnSelectorPlanFromHtmlSnapshotsV1: vi.fn(async () => {
       throw new Error('unmocked getOrLearnSelectorPlanFromHtmlSnapshotsV1');
     }),
+    getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1: vi.fn(async () => {
+      throw new Error('unmocked getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1');
+    }),
     LlmUnavailableError,
+    SchemaLlmUnavailableError,
     RuleCacheReadError,
     buildLearningArtifactPaths: vi.fn(
       ({
@@ -171,6 +183,94 @@ describe('kickstarter/project', () => {
       raw_id: 'id_123',
     });
     expect(row.extra).toBeTypeOf('object');
+  });
+
+  it('schema-first (OPENCLI_SCHEMA_FIRST=1): calls schema-first learner, not direct rule learner; row ok', async () => {
+    vi.stubEnv('OPENCLI_SCHEMA_FIRST', '1');
+
+    const engine = await import('mkt-learning-engine');
+    vi.mocked(engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1).mockResolvedValue({
+      cache_status: 'hit',
+      learning_method: 'cache_hit',
+      llm_model: null,
+      dom_fingerprint: 'fp_schema_first',
+      selector_plan: {
+        plans: [
+          { field: 'title', selectors: ['h1'], fallback_selectors: ['.title-alt'], confidence: 0.9, reason: 't' },
+          { field: 'raw_id', selectors: ['meta[name="og:url"]'], fallback_selectors: [], confidence: 0.8, reason: 'id' },
+        ],
+      },
+      used_snapshot_key: 's1',
+      snapshot_summaries: {
+        s0: { ts: '2026-04-11T00:00:00.000Z', byte_len: 1, text_len: 1, blocked: false },
+        s1: { ts: '2026-04-11T00:00:01.000Z', byte_len: 1, text_len: 1, blocked: false },
+        s2: { ts: '2026-04-11T00:00:02.000Z', byte_len: 1, text_len: 1, blocked: false },
+      },
+      core_schema: [],
+      core_schema_sig: 'sig_test',
+    } as any);
+
+    const page = createPage([
+      '<html><body>s0</body></html>',
+      '<html><body>s1</body></html>',
+      '<html><body>s2</body></html>',
+      {
+        values: { title: 'Schema First Title', raw_id: 'creator/slug-sf', pledged_amount: '$100' },
+        provenance: {
+          title: { strategy: 'selector', selector: 'h1' },
+          raw_id: { strategy: 'selector', selector: 'meta[name="og:url"]' },
+        },
+      },
+    ]);
+
+    const row = (await cmd.func!(page, {
+      url: 'https://www.kickstarter.com/projects/demo/schema-first-project',
+    })) as Record<string, unknown>;
+
+    expect(engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1).toHaveBeenCalledTimes(1);
+    expect(engine.getOrLearnSelectorPlanFromHtmlSnapshotsV1).not.toHaveBeenCalled();
+
+    const input = vi.mocked(engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1).mock.calls[0]?.[0] as any;
+    expect(input).toMatchObject({
+      site: 'kickstarter',
+      page_type: 'project_detail',
+      url: 'https://www.kickstarter.com/projects/demo/schema-first-project',
+      schemaRegistryFilePath: path.join(os.homedir(), '.opencli', 'kickstarter-core-schema.json'),
+      selectorCacheFilePath: expect.any(String),
+      schema_version: 'v1',
+      prompt_version: 'page_understanding_v1',
+      llm: null,
+    });
+    expect(input.core_schema).toBeUndefined();
+
+    expect(row).toMatchObject({
+      site: 'kickstarter',
+      page_type: 'project_detail',
+      title: 'Schema First Title',
+      url: 'https://www.kickstarter.com/projects/demo/schema-first-project',
+      raw_id: 'creator/slug-sf',
+    });
+  });
+
+  it('schema-first miss + no llm: throws SchemaLlmUnavailableError (explicit failure)', async () => {
+    vi.stubEnv('OPENCLI_SCHEMA_FIRST', '1');
+    const engine = await import('mkt-learning-engine');
+    vi.mocked(engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1).mockRejectedValue(
+      new (engine as any).SchemaLlmUnavailableError('schema cache miss and llm unavailable'),
+    );
+
+    const page = createPage([
+      '<html><body>s0</body></html>',
+      '<html><body>s1</body></html>',
+      '<html><body>s2</body></html>',
+    ]);
+
+    await expect(
+      cmd.func!(page, { url: 'https://www.kickstarter.com/projects/demo/ks-project' }),
+    ).rejects.toMatchObject({
+      name: 'SchemaLlmUnavailableError',
+      code: 'schema_cache_miss_and_llm_unavailable',
+    });
   });
 
   it('raw_id fallback: derives from url when missing in extracted values', async () => {
