@@ -17,19 +17,19 @@ vi.mock('mkt-learning-engine', () => {
     }
   }
 
-  class LlmUnavailableError extends Error {
-    readonly code = 'cache_miss_and_llm_unavailable' as const;
+  class SchemaLlmUnavailableError extends Error {
+    readonly code = 'schema_cache_miss_and_llm_unavailable' as const;
     constructor(message: string) {
       super(message);
-      this.name = 'LlmUnavailableError';
+      this.name = 'SchemaLlmUnavailableError';
     }
   }
 
   return {
-    getOrLearnSelectorPlanFromHtmlSnapshotsV1: vi.fn(async () => {
-      throw new Error('unmocked getOrLearnSelectorPlanFromHtmlSnapshotsV1');
+    getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1: vi.fn(async () => {
+      throw new Error('unmocked getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1');
     }),
-    LlmUnavailableError,
+    SchemaLlmUnavailableError,
     RuleCacheReadError,
     buildLearningArtifactPaths: vi.fn(
       ({
@@ -94,9 +94,9 @@ afterEach(() => {
 });
 
 describe('indiegogo/project', () => {
-  it('cache hit: uses engine selector_plan and returns title/url/raw_id top-level', async () => {
+  it('cache hit: uses schema-first learner selector_plan and returns title/url/raw_id top-level', async () => {
     const engine = await import('mkt-learning-engine');
-    vi.mocked(engine.getOrLearnSelectorPlanFromHtmlSnapshotsV1).mockResolvedValue({
+    vi.mocked(engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1).mockResolvedValue({
       cache_status: 'hit',
       learning_method: 'cache_hit',
       llm_model: null,
@@ -113,6 +113,8 @@ describe('indiegogo/project', () => {
         s1: { ts: '2026-04-11T00:00:01.000Z', byte_len: 1, text_len: 1, blocked: false },
         s2: { ts: '2026-04-11T00:00:02.000Z', byte_len: 1, text_len: 1, blocked: false },
       },
+      core_schema: [],
+      core_schema_sig: 'sig_test',
     } as any);
 
     const page = createPage([
@@ -137,32 +139,15 @@ describe('indiegogo/project', () => {
     expect(vi.mocked(page.evaluate).mock.calls[1]?.[0]).toBe('document.documentElement.outerHTML');
     expect(vi.mocked(page.evaluate).mock.calls[2]?.[0]).toBe('document.documentElement.outerHTML');
 
-    expect(engine.getOrLearnSelectorPlanFromHtmlSnapshotsV1).toHaveBeenCalledTimes(1);
-    const input = vi.mocked(engine.getOrLearnSelectorPlanFromHtmlSnapshotsV1).mock.calls[0]?.[0] as any;
+    expect(engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1).toHaveBeenCalledTimes(1);
+    const input = vi.mocked(engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1).mock.calls[0]?.[0] as any;
     expect(input).toMatchObject({
       site: 'indiegogo',
       page_type: 'project_detail',
       url: 'https://www.indiegogo.com/en/projects/demo/the-campaign',
       llm: null,
     });
-    const fields = (input.core_schema ?? []).map((x: any) => x.field);
-    expect(fields).toEqual(
-      expect.arrayContaining([
-        'title',
-        'url',
-        'raw_id',
-        'creator_name',
-        'category',
-        'location',
-        'blurb',
-        'backers',
-        'raised_amount',
-        'goal_amount',
-        'percent_funded',
-        'currency',
-        'deadline',
-      ]),
-    );
+    expect(input.core_schema).toBeUndefined();
 
     expect(row).toMatchObject({
       site: 'indiegogo',
@@ -176,7 +161,7 @@ describe('indiegogo/project', () => {
 
   it('raw_id fallback: derives from url when missing in extracted values', async () => {
     const engine = await import('mkt-learning-engine');
-    vi.mocked(engine.getOrLearnSelectorPlanFromHtmlSnapshotsV1).mockResolvedValue({
+    vi.mocked(engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1).mockResolvedValue({
       cache_status: 'hit',
       learning_method: 'cache_hit',
       llm_model: null,
@@ -188,6 +173,8 @@ describe('indiegogo/project', () => {
         s1: { ts: '2026-04-11T00:00:01.000Z', byte_len: 1, text_len: 1, blocked: false },
         s2: { ts: '2026-04-11T00:00:02.000Z', byte_len: 1, text_len: 1, blocked: false },
       },
+      core_schema: [],
+      core_schema_sig: 'sig_test',
     } as any);
 
     const page = createPage([
@@ -210,7 +197,7 @@ describe('indiegogo/project', () => {
 
     try {
       const engine = await import('mkt-learning-engine');
-      vi.mocked(engine.getOrLearnSelectorPlanFromHtmlSnapshotsV1).mockResolvedValue({
+      vi.mocked(engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1).mockResolvedValue({
         cache_status: 'hit',
         learning_method: 'cache_hit',
         llm_model: null,
@@ -222,6 +209,8 @@ describe('indiegogo/project', () => {
           s1: { ts: '2026-04-11T00:00:01.000Z', byte_len: 1, text_len: 1, blocked: false },
           s2: { ts: '2026-04-11T00:00:02.000Z', byte_len: 1, text_len: 1, blocked: false },
         },
+        core_schema: [],
+        core_schema_sig: 'sig_test',
       } as any);
 
       const page = createPage([

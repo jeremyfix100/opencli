@@ -77,6 +77,17 @@ function getLearningModeFromEnv(): 'auto' | 'llm_only' | 'heuristic_only' | unde
   return undefined;
 }
 
+function getIndiegogoSchemaRegistryPath(): string {
+  const overridden = process.env.OPENCLI_INDIEGOGO_SCHEMA_REGISTRY_PATH?.trim();
+  if (overridden) return overridden;
+  return path.join(os.homedir(), '.opencli', 'indiegogo-core-schema.json');
+}
+
+function getSchemaHintPromptFromEnv(): string | undefined {
+  const raw = process.env.OPENCLI_INDIEGOGO_SCHEMA_HINT_PROMPT?.trim();
+  return raw ? raw : undefined;
+}
+
 function makeRunId(): string {
   // Use UTC+8 by default for human-friendly artifact directories.
   return 'ig_' + nowIsoUtc8().replace(/[:.]/g, '-');
@@ -231,21 +242,8 @@ cli({
     const cacheFilePath = getRuleCacheFilePath();
     const llm = getLlmConfigFromEnv();
     const learning_mode = getLearningModeFromEnv();
-    const core_schema: Array<{ field: string; value_type: string; required: boolean }> = [
-      { field: 'title', value_type: 'text', required: true },
-      { field: 'url', value_type: 'url', required: false },
-      { field: 'raw_id', value_type: 'text', required: false },
-      { field: 'creator_name', value_type: 'text', required: false },
-      { field: 'category', value_type: 'text', required: false },
-      { field: 'location', value_type: 'text', required: false },
-      { field: 'blurb', value_type: 'text', required: false },
-      { field: 'backers', value_type: 'text', required: true },
-      { field: 'raised_amount', value_type: 'text', required: true },
-      { field: 'goal_amount', value_type: 'text', required: true },
-      { field: 'percent_funded', value_type: 'text', required: true },
-      { field: 'currency', value_type: 'text', required: false },
-      { field: 'deadline', value_type: 'text', required: false },
-    ];
+    const schemaRegistryFilePath = getIndiegogoSchemaRegistryPath();
+    const schema_hint_prompt = getSchemaHintPromptFromEnv();
 
     if (artifactPaths && runId) {
       await safeWriteJson(engine, path.join(artifactPaths.root, 'engine-input.json'), {
@@ -258,21 +256,26 @@ cli({
         cache: { file_path: cacheFilePath },
         learning_mode: learning_mode ?? null,
         llm: llm ? { endpoint: llm.endpoint, model: llm.model, timeoutMs: llm.timeoutMs ?? null } : null,
-        core_schema,
+        schema_first: {
+          enabled: true,
+          schema_registry_file_path: schemaRegistryFilePath,
+          schema_hint_prompt: schema_hint_prompt ?? null,
+        },
         html_snapshots_summary: htmlSnapshotsSummary,
         snapshots_saved: true,
       });
     }
 
-    const learningRes = await engine.getOrLearnSelectorPlanFromHtmlSnapshotsV1({
-      cacheFilePath,
+    const learningRes = await engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1({
+      schemaRegistryFilePath,
+      selectorCacheFilePath: cacheFilePath,
       site: 'indiegogo',
       page_type: pageType,
       url,
       url_pattern: urlPattern,
       schema_version: 'v1',
       prompt_version: 'page_understanding_v1',
-      core_schema,
+      ...(schema_hint_prompt !== undefined ? { schema_hint_prompt } : {}),
       html_snapshots,
       learning_mode,
       llm,
@@ -280,6 +283,19 @@ cli({
     });
 
     if (artifactPaths && runId) {
+      const schemaFirstOut = {
+        enabled: true,
+        schema_registry_file_path: schemaRegistryFilePath,
+        schema_hint_prompt: schema_hint_prompt ?? null,
+        core_schema: (learningRes as any).core_schema ?? null,
+        core_schema_sig: (learningRes as any).core_schema_sig ?? null,
+        schema_variant_key: (learningRes as any).schema_variant_key ?? null,
+        schema_cache_status: (learningRes as any).schema_cache_status ?? null,
+        schema_learning_method: (learningRes as any).schema_learning_method ?? null,
+        schema_llm_model: (learningRes as any).schema_llm_model ?? null,
+        schema_used_snapshot_key: (learningRes as any).schema_used_snapshot_key ?? null,
+        schema_snapshot_summaries: (learningRes as any).schema_snapshot_summaries ?? null,
+      };
       await safeWriteJson(engine, path.join(artifactPaths.root, 'engine-output.json'), {
         cache_status: learningRes.cache_status,
         learning_method: (learningRes as any).learning_method,
@@ -288,6 +304,7 @@ cli({
         used_snapshot_key: learningRes.used_snapshot_key,
         snapshot_summaries: learningRes.snapshot_summaries,
         selector_plan: learningRes.selector_plan,
+        schema_first: schemaFirstOut,
       });
     }
 
@@ -467,12 +484,27 @@ cli({
     };
 
     if (artifactPaths && runId) {
+      const schemaFirstOut = {
+        enabled: true,
+        schema_registry_file_path: schemaRegistryFilePath,
+        schema_hint_prompt: schema_hint_prompt ?? null,
+        core_schema: (learningRes as any).core_schema ?? null,
+        core_schema_sig: (learningRes as any).core_schema_sig ?? null,
+        schema_variant_key: (learningRes as any).schema_variant_key ?? null,
+        schema_cache_status: (learningRes as any).schema_cache_status ?? null,
+        schema_learning_method: (learningRes as any).schema_learning_method ?? null,
+        schema_llm_model: (learningRes as any).schema_llm_model ?? null,
+        schema_used_snapshot_key: (learningRes as any).schema_used_snapshot_key ?? null,
+        schema_snapshot_summaries: (learningRes as any).schema_snapshot_summaries ?? null,
+      };
       await safeWriteJson(engine, artifactPaths.selectorPlan, {
         cache_status: learningRes.cache_status,
         learning_method: (learningRes as any).learning_method,
         llm_model: (learningRes as any).llm_model,
         dom_fingerprint: learningRes.dom_fingerprint,
         used_snapshot_key: learningRes.used_snapshot_key,
+        snapshot_summaries: learningRes.snapshot_summaries,
+        schema_first: schemaFirstOut,
         selector_plan: selectorPlanForEval,
       });
       await safeWriteJson(engine, artifactPaths.extractionResult, row);

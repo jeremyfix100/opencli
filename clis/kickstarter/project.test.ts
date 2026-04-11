@@ -17,14 +17,6 @@ vi.mock('mkt-learning-engine', () => {
     }
   }
 
-  class LlmUnavailableError extends Error {
-    readonly code = 'cache_miss_and_llm_unavailable' as const;
-    constructor(message: string) {
-      super(message);
-      this.name = 'LlmUnavailableError';
-    }
-  }
-
   class SchemaLlmUnavailableError extends Error {
     readonly code = 'schema_cache_miss_and_llm_unavailable' as const;
     constructor(message: string) {
@@ -34,13 +26,9 @@ vi.mock('mkt-learning-engine', () => {
   }
 
   return {
-    getOrLearnSelectorPlanFromHtmlSnapshotsV1: vi.fn(async () => {
-      throw new Error('unmocked getOrLearnSelectorPlanFromHtmlSnapshotsV1');
-    }),
     getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1: vi.fn(async () => {
       throw new Error('unmocked getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1');
     }),
-    LlmUnavailableError,
     SchemaLlmUnavailableError,
     RuleCacheReadError,
     buildLearningArtifactPaths: vi.fn(
@@ -106,12 +94,13 @@ afterEach(() => {
 });
 
 describe('kickstarter/project', () => {
-  it('cache hit: uses engine selector_plan and returns title/url/raw_id top-level', async () => {
+  it('cache hit: uses schema-first learner selector_plan and returns title/url/raw_id top-level', async () => {
     const engine = await import('mkt-learning-engine');
-    vi.mocked(engine.getOrLearnSelectorPlanFromHtmlSnapshotsV1).mockResolvedValue({
+    vi.mocked(engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1).mockResolvedValue({
       cache_status: 'hit',
       learning_method: 'cache_hit',
       dom_fingerprint: 'fp_test',
+      llm_model: null,
       selector_plan: {
         plans: [
           { field: 'title', selectors: ['h1'], fallback_selectors: ['.title-alt'], confidence: 0.9, reason: 't' },
@@ -124,6 +113,8 @@ describe('kickstarter/project', () => {
         s1: { ts: '2026-04-11T00:00:01.000Z', byte_len: 1, text_len: 1, blocked: false },
         s2: { ts: '2026-04-11T00:00:02.000Z', byte_len: 1, text_len: 1, blocked: false },
       },
+      core_schema: [],
+      core_schema_sig: 'sig_test',
     } as any);
 
     const page = createPage([
@@ -148,32 +139,14 @@ describe('kickstarter/project', () => {
     expect(vi.mocked(page.evaluate).mock.calls[1]?.[0]).toBe('document.documentElement.outerHTML');
     expect(vi.mocked(page.evaluate).mock.calls[2]?.[0]).toBe('document.documentElement.outerHTML');
 
-    expect(engine.getOrLearnSelectorPlanFromHtmlSnapshotsV1).toHaveBeenCalledTimes(1);
-    const input = vi.mocked(engine.getOrLearnSelectorPlanFromHtmlSnapshotsV1).mock.calls[0]?.[0] as any;
+    expect(engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1).toHaveBeenCalledTimes(1);
+    const input = vi.mocked(engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1).mock.calls[0]?.[0] as any;
     expect(input).toMatchObject({
       site: 'kickstarter',
       page_type: 'project_detail',
       url: 'https://www.kickstarter.com/projects/demo/ks-project',
       llm: null,
     });
-    const coreFields = (input.core_schema ?? []).map((x: any) => x.field);
-    expect(coreFields).toEqual(
-      expect.arrayContaining([
-        'title',
-        'url',
-        'raw_id',
-        'creator_name',
-        'category',
-        'location',
-        'blurb',
-        'backers',
-        'pledged_amount',
-        'goal_amount',
-        'percent_funded',
-        'currency',
-        'deadline',
-      ]),
-    );
     expect(input.html_snapshots.s0.html).toContain('s0');
     expect(input.html_snapshots.s1.html).toContain('s1');
     expect(input.html_snapshots.s2.html).toContain('s2');
@@ -188,9 +161,8 @@ describe('kickstarter/project', () => {
     expect(row.extra).toBeTypeOf('object');
   });
 
-  it('schema-first (OPENCLI_SCHEMA_FIRST=1): calls schema-first learner, not direct rule learner; row ok', async () => {
-    vi.stubEnv('OPENCLI_SCHEMA_FIRST', '1');
-
+  it('schema-first: passes schema_hint_prompt when provided', async () => {
+    vi.stubEnv('OPENCLI_KICKSTARTER_SCHEMA_HINT_PROMPT', 'Prefer canonical ontology fields');
     const engine = await import('mkt-learning-engine');
     vi.mocked(engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1).mockResolvedValue({
       cache_status: 'hit',
@@ -231,7 +203,6 @@ describe('kickstarter/project', () => {
     })) as Record<string, unknown>;
 
     expect(engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1).toHaveBeenCalledTimes(1);
-    expect(engine.getOrLearnSelectorPlanFromHtmlSnapshotsV1).not.toHaveBeenCalled();
 
     const input = vi.mocked(engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1).mock.calls[0]?.[0] as any;
     expect(input).toMatchObject({
@@ -243,6 +214,7 @@ describe('kickstarter/project', () => {
       schema_version: 'v1',
       prompt_version: 'page_understanding_v1',
       llm: null,
+      schema_hint_prompt: 'Prefer canonical ontology fields',
     });
     expect(input.core_schema).toBeUndefined();
 
@@ -256,7 +228,6 @@ describe('kickstarter/project', () => {
   });
 
   it('schema-first miss + no llm: throws SchemaLlmUnavailableError (explicit failure)', async () => {
-    vi.stubEnv('OPENCLI_SCHEMA_FIRST', '1');
     const engine = await import('mkt-learning-engine');
     vi.mocked(engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1).mockRejectedValue(
       new (engine as any).SchemaLlmUnavailableError('schema cache miss and llm unavailable'),
@@ -278,9 +249,10 @@ describe('kickstarter/project', () => {
 
   it('raw_id fallback: derives from url when missing in extracted values', async () => {
     const engine = await import('mkt-learning-engine');
-    vi.mocked(engine.getOrLearnSelectorPlanFromHtmlSnapshotsV1).mockResolvedValue({
+    vi.mocked(engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1).mockResolvedValue({
       cache_status: 'hit',
       learning_method: 'cache_hit',
+      llm_model: null,
       dom_fingerprint: 'fp_test',
       selector_plan: { plans: [{ field: 'title', selectors: ['h1'], fallback_selectors: [] }] },
       used_snapshot_key: 's1',
@@ -289,6 +261,8 @@ describe('kickstarter/project', () => {
         s1: { ts: '2026-04-11T00:00:01.000Z', byte_len: 1, text_len: 1, blocked: false },
         s2: { ts: '2026-04-11T00:00:02.000Z', byte_len: 1, text_len: 1, blocked: false },
       },
+      core_schema: [],
+      core_schema_sig: 'sig_test',
     } as any);
 
     const page = createPage([
@@ -311,9 +285,10 @@ describe('kickstarter/project', () => {
 
     try {
       const engine = await import('mkt-learning-engine');
-      vi.mocked(engine.getOrLearnSelectorPlanFromHtmlSnapshotsV1).mockResolvedValue({
+      vi.mocked(engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1).mockResolvedValue({
         cache_status: 'hit',
         learning_method: 'cache_hit',
+        llm_model: null,
         dom_fingerprint: 'fp_test',
         selector_plan: { plans: [{ field: 'title', selectors: ['h1'], fallback_selectors: [] }] },
         used_snapshot_key: 's1',
@@ -322,6 +297,8 @@ describe('kickstarter/project', () => {
           s1: { ts: '2026-04-11T00:00:01.000Z', byte_len: 1, text_len: 1, blocked: false },
           s2: { ts: '2026-04-11T00:00:02.000Z', byte_len: 1, text_len: 1, blocked: false },
         },
+        core_schema: [],
+        core_schema_sig: 'sig_test',
       } as any);
 
       const page = createPage([
@@ -354,10 +331,10 @@ describe('kickstarter/project', () => {
     }
   });
 
-  it('cache miss + no llm: throws LlmUnavailableError (explicit failure)', async () => {
+  it('cache miss + no llm: throws SchemaLlmUnavailableError (explicit failure)', async () => {
     const engine = await import('mkt-learning-engine');
-    vi.mocked(engine.getOrLearnSelectorPlanFromHtmlSnapshotsV1).mockRejectedValue(
-      new engine.LlmUnavailableError('cache miss and llm unavailable'),
+    vi.mocked(engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1).mockRejectedValue(
+      new (engine as any).SchemaLlmUnavailableError('schema cache miss and llm unavailable'),
     );
 
     const page = createPage([
@@ -369,14 +346,14 @@ describe('kickstarter/project', () => {
     await expect(
       cmd.func!(page, { url: 'https://www.kickstarter.com/projects/demo/ks-project' }),
     ).rejects.toMatchObject({
-      name: 'LlmUnavailableError',
-      code: 'cache_miss_and_llm_unavailable',
+      name: 'SchemaLlmUnavailableError',
+      code: 'schema_cache_miss_and_llm_unavailable',
     });
   });
 
   it('cache read error: passes through RuleCacheReadError', async () => {
     const engine = await import('mkt-learning-engine');
-    vi.mocked(engine.getOrLearnSelectorPlanFromHtmlSnapshotsV1).mockRejectedValue(
+    vi.mocked(engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1).mockRejectedValue(
       new engine.RuleCacheReadError('cache_read_failed', 'x'),
     );
 

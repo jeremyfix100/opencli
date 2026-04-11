@@ -78,10 +78,6 @@ function getLearningModeFromEnv(): 'auto' | 'llm_only' | 'heuristic_only' | unde
   return undefined;
 }
 
-function isOpencliSchemaFirst(): boolean {
-  return process.env.OPENCLI_SCHEMA_FIRST?.trim() === '1';
-}
-
 function getKickstarterSchemaRegistryPath(): string {
   const overridden = process.env.OPENCLI_KICKSTARTER_SCHEMA_REGISTRY_PATH?.trim();
   if (overridden) return overridden;
@@ -248,30 +244,13 @@ cli({
     const learning_mode = getLearningModeFromEnv();
     type EngineMod = typeof import('mkt-learning-engine');
     type LearningRes =
-      | Awaited<ReturnType<EngineMod['getOrLearnSelectorPlanFromHtmlSnapshotsV1']>>
       | Awaited<ReturnType<EngineMod['getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1']>>;
     let learningRes: LearningRes;
     try {
-      const schemaFirst = isOpencliSchemaFirst();
-      const core_schema: Array<{ field: string; value_type: string; required: boolean }> = [
-        { field: 'title', value_type: 'text', required: true },
-        { field: 'url', value_type: 'url', required: false },
-        { field: 'raw_id', value_type: 'text', required: false },
-        // KPI-ish fields (V1: keep as text; normalization can be added later)
-        { field: 'creator_name', value_type: 'text', required: false },
-        { field: 'category', value_type: 'text', required: false },
-        { field: 'location', value_type: 'text', required: false },
-        { field: 'blurb', value_type: 'text', required: false },
-        { field: 'backers', value_type: 'text', required: true },
-        { field: 'pledged_amount', value_type: 'text', required: true },
-        { field: 'goal_amount', value_type: 'text', required: true },
-        { field: 'percent_funded', value_type: 'text', required: true },
-        { field: 'currency', value_type: 'text', required: false },
-        { field: 'deadline', value_type: 'text', required: false },
-      ];
+      const schemaRegistryFilePath = getKickstarterSchemaRegistryPath();
+      const schema_hint_prompt = getSchemaHintPromptFromEnv();
 
       if (artifactPaths && runId) {
-        const coreSchemaSig = schemaFirst ? undefined : engine.buildCoreSchemaSigV1(core_schema as any);
         await safeWriteJson(engine, path.join(artifactPaths.root, 'engine-input.json'), {
           site: 'kickstarter',
           page_type: pageType,
@@ -282,69 +261,43 @@ cli({
           cache: { file_path: cacheFilePath },
           learning_mode: learning_mode ?? null,
           llm: llm ? { endpoint: llm.endpoint, model: llm.model, timeoutMs: llm.timeoutMs ?? null } : null,
-          ...(schemaFirst
-            ? {
-                schema_first: {
-                  enabled: true,
-                  schema_registry_file_path: getKickstarterSchemaRegistryPath(),
-                  schema_hint_prompt: getSchemaHintPromptFromEnv() ?? null,
-                },
-              }
-            : { core_schema, core_schema_sig: coreSchemaSig ?? null }),
+          schema_first: {
+            enabled: true,
+            schema_registry_file_path: schemaRegistryFilePath,
+            schema_hint_prompt: schema_hint_prompt ?? null,
+          },
           html_snapshots_summary: htmlSnapshotsSummary,
           snapshots_saved: true,
         });
       }
 
-      if (isOpencliSchemaFirst()) {
-        const schemaRegistryFilePath = getKickstarterSchemaRegistryPath();
-        const schema_hint_prompt = getSchemaHintPromptFromEnv();
-        learningRes = await engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1({
-          schemaRegistryFilePath,
-          selectorCacheFilePath: cacheFilePath,
-          site: 'kickstarter',
-          page_type: pageType,
-          url,
-          url_pattern: urlPattern,
-          schema_version: 'v1',
-          prompt_version: 'page_understanding_v1',
-          ...(schema_hint_prompt !== undefined ? { schema_hint_prompt } : {}),
-          html_snapshots,
-          learning_mode,
-          llm,
-          fetchImpl: fetch,
-        });
-      } else {
-        learningRes = await engine.getOrLearnSelectorPlanFromHtmlSnapshotsV1({
-          cacheFilePath,
-          site: 'kickstarter',
-          page_type: pageType,
-          url,
-          url_pattern: urlPattern,
-          schema_version: 'v1',
-          prompt_version: 'page_understanding_v1',
-          core_schema,
-          html_snapshots,
-          learning_mode,
-          llm,
-          fetchImpl: fetch,
-        });
-      }
+      learningRes = await engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1({
+        schemaRegistryFilePath,
+        selectorCacheFilePath: cacheFilePath,
+        site: 'kickstarter',
+        page_type: pageType,
+        url,
+        url_pattern: urlPattern,
+        schema_version: 'v1',
+        prompt_version: 'page_understanding_v1',
+        ...(schema_hint_prompt !== undefined ? { schema_hint_prompt } : {}),
+        html_snapshots,
+        learning_mode,
+        llm,
+        fetchImpl: fetch,
+      });
     } catch (e) {
       if (artifactPaths && runId) {
         const err = e instanceof Error ? e : new Error(String(e));
-        const isLlmUnavailable = e instanceof engine.LlmUnavailableError;
         const isSchemaLlmUnavailable =
           typeof (engine as any).SchemaLlmUnavailableError === 'function' &&
           e instanceof (engine as any).SchemaLlmUnavailableError;
         const isCacheRead = e instanceof engine.RuleCacheReadError;
-        const errorType = isLlmUnavailable
-          ? 'llm_unavailable'
-          : isSchemaLlmUnavailable
-            ? 'schema_llm_unavailable'
-            : isCacheRead
-              ? e.type
-              : 'unknown';
+        const errorType = isSchemaLlmUnavailable
+          ? 'schema_llm_unavailable'
+          : isCacheRead
+            ? e.type
+            : 'unknown';
         const errorCode = typeof (e as any)?.code === 'string' ? (e as any).code : undefined;
 
         await safeAppendTrace(
@@ -369,18 +322,19 @@ cli({
     }
 
     if (artifactPaths && runId) {
-      const schemaFirstOut = isOpencliSchemaFirst()
-        ? {
-            core_schema: (learningRes as any).core_schema ?? null,
-            core_schema_sig: (learningRes as any).core_schema_sig ?? null,
-            schema_variant_key: (learningRes as any).schema_variant_key ?? null,
-            schema_cache_status: (learningRes as any).schema_cache_status ?? null,
-            schema_learning_method: (learningRes as any).schema_learning_method ?? null,
-            schema_llm_model: (learningRes as any).schema_llm_model ?? null,
-            schema_used_snapshot_key: (learningRes as any).schema_used_snapshot_key ?? null,
-            schema_snapshot_summaries: (learningRes as any).schema_snapshot_summaries ?? null,
-          }
-        : null;
+      const schemaFirstOut = {
+        enabled: true,
+        schema_registry_file_path: getKickstarterSchemaRegistryPath(),
+        schema_hint_prompt: getSchemaHintPromptFromEnv() ?? null,
+        core_schema: (learningRes as any).core_schema ?? null,
+        core_schema_sig: (learningRes as any).core_schema_sig ?? null,
+        schema_variant_key: (learningRes as any).schema_variant_key ?? null,
+        schema_cache_status: (learningRes as any).schema_cache_status ?? null,
+        schema_learning_method: (learningRes as any).schema_learning_method ?? null,
+        schema_llm_model: (learningRes as any).schema_llm_model ?? null,
+        schema_used_snapshot_key: (learningRes as any).schema_used_snapshot_key ?? null,
+        schema_snapshot_summaries: (learningRes as any).schema_snapshot_summaries ?? null,
+      };
       await safeWriteJson(engine, path.join(artifactPaths.root, 'engine-output.json'), {
         cache_status: learningRes.cache_status,
         learning_method: (learningRes as any).learning_method ?? null,
@@ -523,21 +477,19 @@ cli({
       const planFields = Array.isArray(selectorPlanForEval?.plans)
         ? selectorPlanForEval.plans.map((p: any) => String(p?.field ?? '')).filter(Boolean)
         : [];
-      const schemaFirstOut = isOpencliSchemaFirst()
-        ? {
-            enabled: true,
-            schema_registry_file_path: getKickstarterSchemaRegistryPath(),
-            schema_hint_prompt: getSchemaHintPromptFromEnv() ?? null,
-            core_schema: (learningRes as any).core_schema ?? null,
-            core_schema_sig: (learningRes as any).core_schema_sig ?? null,
-            schema_variant_key: (learningRes as any).schema_variant_key ?? null,
-            schema_cache_status: (learningRes as any).schema_cache_status ?? null,
-            schema_learning_method: (learningRes as any).schema_learning_method ?? null,
-            schema_llm_model: (learningRes as any).schema_llm_model ?? null,
-            schema_used_snapshot_key: (learningRes as any).schema_used_snapshot_key ?? null,
-            schema_snapshot_summaries: (learningRes as any).schema_snapshot_summaries ?? null,
-          }
-        : { enabled: false };
+      const schemaFirstOut = {
+        enabled: true,
+        schema_registry_file_path: getKickstarterSchemaRegistryPath(),
+        schema_hint_prompt: getSchemaHintPromptFromEnv() ?? null,
+        core_schema: (learningRes as any).core_schema ?? null,
+        core_schema_sig: (learningRes as any).core_schema_sig ?? null,
+        schema_variant_key: (learningRes as any).schema_variant_key ?? null,
+        schema_cache_status: (learningRes as any).schema_cache_status ?? null,
+        schema_learning_method: (learningRes as any).schema_learning_method ?? null,
+        schema_llm_model: (learningRes as any).schema_llm_model ?? null,
+        schema_used_snapshot_key: (learningRes as any).schema_used_snapshot_key ?? null,
+        schema_snapshot_summaries: (learningRes as any).schema_snapshot_summaries ?? null,
+      };
       await safeWriteJson(engine, artifactPaths.selectorPlan, {
         site: 'kickstarter',
         page_type: pageType,
