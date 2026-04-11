@@ -7,6 +7,27 @@ import type { IPage } from '@jackwener/opencli/types';
 const DOMAIN = 'www.kickstarter.com';
 const BASE_URL = 'https://www.kickstarter.com';
 
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+function pad3(n: number): string {
+  return String(n).padStart(3, '0');
+}
+
+function nowIsoUtc8(): string {
+  const d = new Date();
+  const shifted = new Date(d.getTime() + 8 * 60 * 60 * 1000);
+  const Y = shifted.getUTCFullYear();
+  const M = pad2(shifted.getUTCMonth() + 1);
+  const D = pad2(shifted.getUTCDate());
+  const h = pad2(shifted.getUTCHours());
+  const m = pad2(shifted.getUTCMinutes());
+  const s = pad2(shifted.getUTCSeconds());
+  const ms = pad3(shifted.getUTCMilliseconds());
+  return `${Y}-${M}-${D}T${h}:${m}:${s}.${ms}+08:00`;
+}
+
 function toAbsoluteUrl(value: string): string {
   const raw = String(value ?? '').trim();
   const u = new URL(raw, BASE_URL);
@@ -73,7 +94,8 @@ function getSchemaHintPromptFromEnv(): string | undefined {
 }
 
 function makeRunId(): string {
-  return 'ks_' + new Date().toISOString().replace(/[:.]/g, '-');
+  // Use UTC+8 by default for human-friendly artifact directories.
+  return 'ks_' + nowIsoUtc8().replace(/[:.]/g, '-');
 }
 
 function getRuleCacheFilePath(): string {
@@ -182,7 +204,7 @@ cli({
     }
     const s2html = await page.evaluate('document.documentElement.outerHTML');
 
-    const ts = () => new Date().toISOString();
+    const ts = () => nowIsoUtc8();
     const html_snapshots = {
       s0: { ts: ts(), html: typeof s0html === 'string' ? s0html : String(s0html ?? '') },
       s1: { ts: ts(), html: typeof s1html === 'string' ? s1html : String(s1html ?? '') },
@@ -225,7 +247,9 @@ cli({
     const llm = getLlmConfigFromEnv();
     const learning_mode = getLearningModeFromEnv();
     type EngineMod = typeof import('mkt-learning-engine');
-    type LearningRes = Awaited<ReturnType<EngineMod['getOrLearnSelectorPlanFromHtmlSnapshotsV1']>>;
+    type LearningRes =
+      | Awaited<ReturnType<EngineMod['getOrLearnSelectorPlanFromHtmlSnapshotsV1']>>
+      | Awaited<ReturnType<EngineMod['getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1']>>;
     let learningRes: LearningRes;
     try {
       const schemaFirst = isOpencliSchemaFirst();
@@ -247,6 +271,7 @@ cli({
       ];
 
       if (artifactPaths && runId) {
+        const coreSchemaSig = schemaFirst ? undefined : engine.buildCoreSchemaSigV1(core_schema as any);
         await safeWriteJson(engine, path.join(artifactPaths.root, 'engine-input.json'), {
           site: 'kickstarter',
           page_type: pageType,
@@ -265,7 +290,7 @@ cli({
                   schema_hint_prompt: getSchemaHintPromptFromEnv() ?? null,
                 },
               }
-            : { core_schema }),
+            : { core_schema, core_schema_sig: coreSchemaSig ?? null }),
           html_snapshots_summary: htmlSnapshotsSummary,
           snapshots_saved: true,
         });
@@ -344,14 +369,27 @@ cli({
     }
 
     if (artifactPaths && runId) {
+      const schemaFirstOut = isOpencliSchemaFirst()
+        ? {
+            core_schema: (learningRes as any).core_schema ?? null,
+            core_schema_sig: (learningRes as any).core_schema_sig ?? null,
+            schema_variant_key: (learningRes as any).schema_variant_key ?? null,
+            schema_cache_status: (learningRes as any).schema_cache_status ?? null,
+            schema_learning_method: (learningRes as any).schema_learning_method ?? null,
+            schema_llm_model: (learningRes as any).schema_llm_model ?? null,
+            schema_used_snapshot_key: (learningRes as any).schema_used_snapshot_key ?? null,
+            schema_snapshot_summaries: (learningRes as any).schema_snapshot_summaries ?? null,
+          }
+        : null;
       await safeWriteJson(engine, path.join(artifactPaths.root, 'engine-output.json'), {
         cache_status: learningRes.cache_status,
-        learning_method: (learningRes as any).learning_method,
-        llm_model: (learningRes as any).llm_model,
+        learning_method: (learningRes as any).learning_method ?? null,
+        llm_model: (learningRes as any).llm_model ?? null,
         dom_fingerprint: learningRes.dom_fingerprint,
         used_snapshot_key: learningRes.used_snapshot_key,
         snapshot_summaries: learningRes.snapshot_summaries,
         selector_plan: learningRes.selector_plan,
+        schema_first: schemaFirstOut,
       });
     }
 
@@ -482,13 +520,40 @@ cli({
     };
 
     if (artifactPaths && runId) {
+      const planFields = Array.isArray(selectorPlanForEval?.plans)
+        ? selectorPlanForEval.plans.map((p: any) => String(p?.field ?? '')).filter(Boolean)
+        : [];
+      const schemaFirstOut = isOpencliSchemaFirst()
+        ? {
+            enabled: true,
+            schema_registry_file_path: getKickstarterSchemaRegistryPath(),
+            schema_hint_prompt: getSchemaHintPromptFromEnv() ?? null,
+            core_schema: (learningRes as any).core_schema ?? null,
+            core_schema_sig: (learningRes as any).core_schema_sig ?? null,
+            schema_variant_key: (learningRes as any).schema_variant_key ?? null,
+            schema_cache_status: (learningRes as any).schema_cache_status ?? null,
+            schema_learning_method: (learningRes as any).schema_learning_method ?? null,
+            schema_llm_model: (learningRes as any).schema_llm_model ?? null,
+            schema_used_snapshot_key: (learningRes as any).schema_used_snapshot_key ?? null,
+            schema_snapshot_summaries: (learningRes as any).schema_snapshot_summaries ?? null,
+          }
+        : { enabled: false };
       await safeWriteJson(engine, artifactPaths.selectorPlan, {
+        site: 'kickstarter',
+        page_type: pageType,
+        url,
+        url_pattern: urlPattern,
+        schema_version: 'v1',
+        prompt_version: 'page_understanding_v1',
         cache_status: learningRes.cache_status,
-        learning_method: learningRes.learning_method,
-        llm_model: learningRes.llm_model,
+        learning_method: (learningRes as any).learning_method ?? null,
+        llm_model: (learningRes as any).llm_model ?? null,
         dom_fingerprint: learningRes.dom_fingerprint,
         used_snapshot_key: learningRes.used_snapshot_key,
         snapshot_summaries: learningRes.snapshot_summaries,
+        plans_count: planFields.length,
+        plan_fields: planFields,
+        schema_first: schemaFirstOut,
         selector_plan: selectorPlanForEval,
       });
       await safeWriteJson(engine, artifactPaths.extractionResult, row);

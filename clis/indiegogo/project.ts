@@ -7,6 +7,27 @@ import type { IPage } from '@jackwener/opencli/types';
 const DOMAIN = 'www.indiegogo.com';
 const BASE_URL = 'https://www.indiegogo.com';
 
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+function pad3(n: number): string {
+  return String(n).padStart(3, '0');
+}
+
+function nowIsoUtc8(): string {
+  const d = new Date();
+  const shifted = new Date(d.getTime() + 8 * 60 * 60 * 1000);
+  const Y = shifted.getUTCFullYear();
+  const M = pad2(shifted.getUTCMonth() + 1);
+  const D = pad2(shifted.getUTCDate());
+  const h = pad2(shifted.getUTCHours());
+  const m = pad2(shifted.getUTCMinutes());
+  const s = pad2(shifted.getUTCSeconds());
+  const ms = pad3(shifted.getUTCMilliseconds());
+  return `${Y}-${M}-${D}T${h}:${m}:${s}.${ms}+08:00`;
+}
+
 function toAbsoluteUrl(value: string): string {
   const raw = String(value ?? '').trim();
   const u = new URL(raw, BASE_URL);
@@ -57,7 +78,8 @@ function getLearningModeFromEnv(): 'auto' | 'llm_only' | 'heuristic_only' | unde
 }
 
 function makeRunId(): string {
-  return 'ig_' + new Date().toISOString().replace(/[:.]/g, '-');
+  // Use UTC+8 by default for human-friendly artifact directories.
+  return 'ig_' + nowIsoUtc8().replace(/[:.]/g, '-');
 }
 
 function getRuleCacheFilePath(): string {
@@ -171,7 +193,7 @@ cli({
     }
     const s2html = await page.evaluate('document.documentElement.outerHTML');
 
-    const ts = () => new Date().toISOString();
+    const ts = () => nowIsoUtc8();
     const html_snapshots = {
       s0: { ts: ts(), html: typeof s0html === 'string' ? s0html : String(s0html ?? '') },
       s1: { ts: ts(), html: typeof s1html === 'string' ? s1html : String(s1html ?? '') },
