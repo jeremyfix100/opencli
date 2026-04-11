@@ -57,7 +57,10 @@ vi.mock('mkt-learning-engine', () => {
         };
       },
     ),
-    writeArtifactJson: vi.fn(async () => undefined),
+    writeArtifactJson: vi.fn(async (filePath: string, payload: unknown) => {
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      await fs.writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+    }),
     createEngineTraceEvent: vi.fn((x) => ({ ts: new Date().toISOString(), ...x })),
     appendEngineTraceEvent: vi.fn(async () => undefined),
   };
@@ -243,6 +246,9 @@ describe('kickstarter/project', () => {
       await expect(fs.stat(path.join(snapshotsDir, 's0.html'))).resolves.toBeTypeOf('object');
       await expect(fs.stat(path.join(snapshotsDir, 's1.html'))).resolves.toBeTypeOf('object');
       await expect(fs.stat(path.join(snapshotsDir, 's2.html'))).resolves.toBeTypeOf('object');
+
+      await expect(fs.stat(path.join(pageDir, 'engine-input.json'))).resolves.toBeTypeOf('object');
+      await expect(fs.stat(path.join(pageDir, 'engine-output.json'))).resolves.toBeTypeOf('object');
     } finally {
       await fs.rm(artifactsDir, { recursive: true, force: true });
     }

@@ -177,6 +177,11 @@ cli({
       s1: { ts: ts(), html: typeof s1html === 'string' ? s1html : String(s1html ?? '') },
       s2: { ts: ts(), html: typeof s2html === 'string' ? s2html : String(s2html ?? '') },
     } as const;
+    const htmlSnapshotsSummary = {
+      s0: { ts: html_snapshots.s0.ts, byte_len: html_snapshots.s0.html.length },
+      s1: { ts: html_snapshots.s1.ts, byte_len: html_snapshots.s1.html.length },
+      s2: { ts: html_snapshots.s2.ts, byte_len: html_snapshots.s2.html.length },
+    } as const;
 
     const artifactPaths =
       artifactsBaseDir && runId
@@ -197,17 +202,45 @@ cli({
         site: 'indiegogo',
         page_type: pageType,
         url,
-        html_snapshots_summary: {
-          s0: { ts: html_snapshots.s0.ts, byte_len: html_snapshots.s0.html.length },
-          s1: { ts: html_snapshots.s1.ts, byte_len: html_snapshots.s1.html.length },
-          s2: { ts: html_snapshots.s2.ts, byte_len: html_snapshots.s2.html.length },
-        },
+        html_snapshots_summary: htmlSnapshotsSummary,
       });
     }
 
     const cacheFilePath = getRuleCacheFilePath();
     const llm = getLlmConfigFromEnv();
     const learning_mode = getLearningModeFromEnv();
+    const core_schema: Array<{ field: string; value_type: string; required: boolean }> = [
+      { field: 'title', value_type: 'text', required: true },
+      { field: 'url', value_type: 'url', required: false },
+      { field: 'raw_id', value_type: 'text', required: false },
+      { field: 'creator_name', value_type: 'text', required: false },
+      { field: 'category', value_type: 'text', required: false },
+      { field: 'location', value_type: 'text', required: false },
+      { field: 'blurb', value_type: 'text', required: false },
+      { field: 'backers', value_type: 'text', required: true },
+      { field: 'raised_amount', value_type: 'text', required: true },
+      { field: 'goal_amount', value_type: 'text', required: true },
+      { field: 'percent_funded', value_type: 'text', required: true },
+      { field: 'currency', value_type: 'text', required: false },
+      { field: 'deadline', value_type: 'text', required: false },
+    ];
+
+    if (artifactPaths && runId) {
+      await safeWriteJson(engine, path.join(artifactPaths.root, 'engine-input.json'), {
+        site: 'indiegogo',
+        page_type: pageType,
+        url,
+        url_pattern: urlPattern,
+        schema_version: 'v1',
+        prompt_version: 'page_understanding_v1',
+        cache: { file_path: cacheFilePath },
+        learning_mode: learning_mode ?? null,
+        llm: llm ? { endpoint: llm.endpoint, model: llm.model, timeoutMs: llm.timeoutMs ?? null } : null,
+        core_schema,
+        html_snapshots_summary: htmlSnapshotsSummary,
+        snapshots_saved: true,
+      });
+    }
 
     const learningRes = await engine.getOrLearnSelectorPlanFromHtmlSnapshotsV1({
       cacheFilePath,
@@ -217,26 +250,24 @@ cli({
       url_pattern: urlPattern,
       schema_version: 'v1',
       prompt_version: 'page_understanding_v1',
-      core_schema: [
-        { field: 'title', value_type: 'text', required: true },
-        { field: 'url', value_type: 'url', required: false },
-        { field: 'raw_id', value_type: 'text', required: false },
-        { field: 'creator_name', value_type: 'text', required: false },
-        { field: 'category', value_type: 'text', required: false },
-        { field: 'location', value_type: 'text', required: false },
-        { field: 'blurb', value_type: 'text', required: false },
-        { field: 'backers', value_type: 'text', required: true },
-        { field: 'raised_amount', value_type: 'text', required: true },
-        { field: 'goal_amount', value_type: 'text', required: true },
-        { field: 'percent_funded', value_type: 'text', required: true },
-        { field: 'currency', value_type: 'text', required: false },
-        { field: 'deadline', value_type: 'text', required: false },
-      ],
+      core_schema,
       html_snapshots,
       learning_mode,
       llm,
       fetchImpl: fetch,
     });
+
+    if (artifactPaths && runId) {
+      await safeWriteJson(engine, path.join(artifactPaths.root, 'engine-output.json'), {
+        cache_status: learningRes.cache_status,
+        learning_method: (learningRes as any).learning_method,
+        llm_model: (learningRes as any).llm_model,
+        dom_fingerprint: learningRes.dom_fingerprint,
+        used_snapshot_key: learningRes.used_snapshot_key,
+        snapshot_summaries: learningRes.snapshot_summaries,
+        selector_plan: learningRes.selector_plan,
+      });
+    }
 
     const selectorPlanForEval = learningRes.selector_plan ?? { plans: [] };
     const exec = (await page.evaluate(`
