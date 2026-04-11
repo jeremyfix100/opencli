@@ -4467,6 +4467,38 @@
   },
   {
     "site": "kickstarter",
+    "name": "project",
+    "description": "Kickstarter project detail (C1: engine learns, opencli executes)",
+    "domain": "www.kickstarter.com",
+    "strategy": "public",
+    "browser": true,
+    "args": [
+      {
+        "name": "url",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Kickstarter project URL"
+      }
+    ],
+    "columns": [
+      "title",
+      "creator_name",
+      "backers",
+      "pledged_amount",
+      "goal_amount",
+      "percent_funded",
+      "currency",
+      "deadline",
+      "url",
+      "raw_id"
+    ],
+    "type": "ts",
+    "modulePath": "kickstarter/project.js",
+    "sourceFile": "kickstarter/project.ts"
+  },
+  {
+    "site": "kickstarter",
     "name": "search",
     "description": "Search Kickstarter projects (JSON-friendly fields for integrations)",
     "domain": "www.kickstarter.com",
