@@ -1,3 +1,4 @@
+import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { cli, Strategy } from '@jackwener/opencli/registry';
@@ -15,17 +16,45 @@ function toAbsoluteUrl(value: string): string {
   return u.toString();
 }
 
-function canUseLlm(): boolean {
-  return Boolean(
-    process.env.MKT_CRAWLER_LLM_ENDPOINT &&
-      process.env.MKT_CRAWLER_LLM_API_KEY &&
-      process.env.MKT_CRAWLER_LLM_MODEL,
-  );
+function getLlmConfigFromEnv():
+  | {
+      endpoint: string;
+      apiKey: string;
+      model: string;
+      timeoutMs?: number;
+    }
+  | null {
+  const endpoint = process.env.MKT_CRAWLER_LLM_ENDPOINT?.trim();
+  const apiKey = process.env.MKT_CRAWLER_LLM_API_KEY?.trim();
+  const model = process.env.MKT_CRAWLER_LLM_MODEL?.trim();
+
+  if (!endpoint || !apiKey || !model) return null;
+
+  // Prefer plugin-scoped override because opencli loads `.env` with override=true.
+  // This lets CI/commands provide a runtime timeout without editing `.env`.
+  const timeoutRaw =
+    process.env.OPENCLI_MKT_CRAWLER_LLM_TIMEOUT_MS?.trim() ??
+    process.env.MKT_CRAWLER_LLM_TIMEOUT_MS?.trim();
+  const timeoutMs = timeoutRaw ? Number(timeoutRaw) : undefined;
+
+  return {
+    endpoint,
+    apiKey,
+    model,
+    timeoutMs: Number.isFinite(timeoutMs) ? timeoutMs : undefined,
+  };
 }
 
 function getArtifactsBaseDir(): string | null {
   const dir = process.env.OPENCLI_LEARNING_ARTIFACTS_DIR?.trim();
   return dir ? dir : null;
+}
+
+function getLearningModeFromEnv(): 'auto' | 'llm_only' | 'heuristic_only' | undefined {
+  const raw = process.env.OPENCLI_KICKSTARTER_LEARNING_MODE?.trim();
+  if (!raw) return undefined;
+  if (raw === 'auto' || raw === 'llm_only' || raw === 'heuristic_only') return raw;
+  return undefined;
 }
 
 function makeRunId(): string {
@@ -38,28 +67,21 @@ function getRuleCacheFilePath(): string {
   return path.join(os.homedir(), '.opencli', 'kickstarter-rule-cache.json');
 }
 
-type Candidate = {
-  node_id: string;
-  selector: string;
-  tag: string;
-  text: string;
-  href: string | null;
-  datetime: string | null;
-  title: string | null;
-  aria_label: string | null;
-  class_list: string[];
-  attributes: Record<string, string>;
-  text_length: number;
-  depth: number;
-  sibling_index: number;
-};
-
-type SnapshotPayload = {
-  page_title: string;
-  candidates: Candidate[];
-  selectorSignature: string[];
-  authRequired?: boolean;
-};
+function rawIdFromKickstarterUrl(url: string): string | null {
+  try {
+    const u = new URL(url);
+    const parts = u.pathname.split('/').filter(Boolean);
+    // /projects/:creator/:slug
+    const idx = parts.indexOf('projects');
+    if (idx < 0) return null;
+    const creator = parts[idx + 1];
+    const slug = parts[idx + 2];
+    if (!creator || !slug) return null;
+    return `${creator}/${slug}`;
+  } catch {
+    return null;
+  }
+}
 
 type ExecPayload = {
   values: Record<string, unknown>;
@@ -90,6 +112,15 @@ async function safeAppendTrace(
   }
 }
 
+async function safeWriteText(filePath: string, content: string): Promise<void> {
+  try {
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, content, 'utf8');
+  } catch {
+    // Must never break crawl path
+  }
+}
+
 cli({
   site: 'kickstarter',
   name: 'project',
@@ -98,7 +129,7 @@ cli({
   strategy: Strategy.PUBLIC,
   browser: true,
   args: [{ name: 'url', positional: true, required: true, help: 'Kickstarter project URL' }],
-  columns: ['title', 'creator_name', 'backers', 'pledged_amount', 'goal_amount', 'percent_funded', 'currency', 'deadline', 'url', 'raw_id'],
+  columns: ['title', 'url', 'raw_id'],
   func: async (page: IPage, kwargs) => {
     const engine = await import('mkt-learning-engine');
     const artifactsBaseDir = getArtifactsBaseDir();
@@ -106,107 +137,43 @@ cli({
 
     const url = toAbsoluteUrl(String(kwargs.url ?? ''));
     await page.goto(url);
+
+    // S0: immediately after navigation
+    const s0html = await page.evaluate('document.documentElement.outerHTML');
+
     try {
       await page.wait(1);
     } catch {
       // Best effort only
     }
 
-    const snapshot = (await page.evaluate(`
-      (function () {
-        function clean(v) { return String(v || '').replace(/\\s+/g, ' ').trim(); }
-        function cssPath(el) {
-          if (!el || !el.nodeType || el.nodeType !== 1) return '';
-          var parts = [];
-          var cur = el;
-          for (var depth = 0; cur && depth < 5; depth++) {
-            var tag = (cur.tagName || '').toLowerCase();
-            if (!tag) break;
-            var id = cur.id ? ('#' + cur.id.replace(/[^a-zA-Z0-9_-]/g, '')) : '';
-            var cls = '';
-            if (cur.classList && cur.classList.length) {
-              cls = '.' + Array.prototype.slice.call(cur.classList, 0, 2)
-                .map(function (x) { return String(x).replace(/[^a-zA-Z0-9_-]/g, ''); })
-                .filter(Boolean)
-                .join('.');
-            }
-            parts.unshift(tag + id + cls);
-            cur = cur.parentElement;
-          }
-          return parts.join(' > ');
-        }
-        var body = document.body;
-        var title = clean(document.title || '');
-        var bodyText = clean(body && body.innerText ? body.innerText : '');
-        var authRequired = /log in|sign in|please sign in|please log in|captcha|verify|verification|risk|风控|登录|验证/i.test(bodyText);
-
-        var selector = 'h1,h2,h3,h4,p,li,div,span,time,a,strong,b';
-        var nodes = document.querySelectorAll(selector);
-        var out = [];
-        var sig = Object.create(null);
-        for (var i = 0; i < nodes.length && out.length < 250; i++) {
-          var el = nodes[i];
-          if (!el || !el.textContent) continue;
-          var text = clean(el.textContent);
-          if (!text || text.length < 2 || text.length > 120) continue;
-          var rects = el.getClientRects ? el.getClientRects() : null;
-          if (rects && rects.length === 0) continue;
-          var sel = cssPath(el);
-          if (!sel) continue;
-          sig[sel] = true;
-          var clsList = [];
-          try { clsList = el.classList ? Array.prototype.slice.call(el.classList, 0, 6) : []; } catch {}
-          var attrs = {};
-          try {
-            if (el.getAttribute) {
-              var whitelist = ['data-testid', 'data-test', 'data-role', 'aria-label', 'title', 'href', 'datetime'];
-              for (var j = 0; j < whitelist.length; j++) {
-                var k = whitelist[j];
-                var v = el.getAttribute(k);
-                if (v) attrs[k] = clean(v);
-              }
-            }
-          } catch {}
-          out.push({
-            node_id: String(out.length + 1),
-            selector: sel,
-            tag: (el.tagName || '').toLowerCase(),
-            text: text,
-            href: el.getAttribute ? (el.getAttribute('href') || null) : null,
-            datetime: el.getAttribute ? (el.getAttribute('datetime') || null) : null,
-            title: el.getAttribute ? (el.getAttribute('title') || null) : null,
-            aria_label: el.getAttribute ? (el.getAttribute('aria-label') || null) : null,
-            class_list: clsList,
-            attributes: attrs,
-            text_length: text.length,
-            depth: 0,
-            sibling_index: 0
-          });
-        }
-        var signature = Object.keys(sig).sort().slice(0, 20);
-        return { page_title: title, candidates: out, selectorSignature: signature, authRequired: authRequired };
-      })()
-    `)) as SnapshotPayload;
-
-    if (snapshot?.authRequired) {
-      // Keep same semantics as other clis: only hard-fail when blocked.
-      // For Kickstarter, we still allow returning partial when data is visible.
-    }
-
-    const selectorSignature = Array.isArray(snapshot?.selectorSignature) ? snapshot.selectorSignature : [];
-    const domFingerprint = engine.buildDomFingerprintV1({ url, selectors: selectorSignature });
     const pageType = 'project_detail';
     const urlPattern = '/projects/:creator/:slug';
-    const keyInput = {
-      site: 'kickstarter',
-      page_type: pageType,
-      dom_fingerprint: domFingerprint,
-      url_pattern: urlPattern,
-      schema_version: 'v1',
-      prompt_version: 'page_understanding_v1',
+    const pageKey = `${pageType}:${urlPattern}`;
+
+    // S1: after a generic wait
+    const s1html = await page.evaluate('document.documentElement.outerHTML');
+
+    // S2: after a generic scroll + optional short wait
+    try {
+      await page.autoScroll();
+    } catch {
+      // Best effort only
+    }
+    try {
+      await page.wait(1);
+    } catch {
+      // Best effort only
+    }
+    const s2html = await page.evaluate('document.documentElement.outerHTML');
+
+    const ts = () => new Date().toISOString();
+    const html_snapshots = {
+      s0: { ts: ts(), html: typeof s0html === 'string' ? s0html : String(s0html ?? '') },
+      s1: { ts: ts(), html: typeof s1html === 'string' ? s1html : String(s1html ?? '') },
+      s2: { ts: ts(), html: typeof s2html === 'string' ? s2html : String(s2html ?? '') },
     } as const;
 
-    const pageKey = `${pageType}:${domFingerprint}`;
     const artifactPaths =
       artifactsBaseDir && runId
         ? engine.buildLearningArtifactPaths({
@@ -217,242 +184,137 @@ cli({
           })
         : null;
 
+    if (artifactPaths) {
+      const snapshotsDir = path.join(artifactPaths.root, 'snapshots');
+      await safeWriteText(path.join(snapshotsDir, 's0.html'), html_snapshots.s0.html);
+      await safeWriteText(path.join(snapshotsDir, 's1.html'), html_snapshots.s1.html);
+      await safeWriteText(path.join(snapshotsDir, 's2.html'), html_snapshots.s2.html);
+    }
+
+    const startedAt = new Date();
     if (artifactPaths && runId) {
       await safeWriteJson(engine, artifactPaths.rawPage, {
+        site: 'kickstarter',
+        page_type: pageType,
         url,
-        page_title: snapshot?.page_title ?? '',
-        candidate_count: Array.isArray(snapshot?.candidates) ? snapshot.candidates.length : 0,
-      });
-      await safeAppendTrace(
-        engine,
-        artifactPaths.engineTraceJsonl,
-        engine.createEngineTraceEvent({
-          run_id: runId,
-          site: 'kickstarter',
-          url,
-          page_key: pageKey,
-          stage: 'sample',
-          event: 'sample-start',
-          status: 'started',
-          cache_status: 'na',
-          input_summary: undefined,
-          output_summary: undefined,
-          error: null,
-        }),
-      );
-      await safeAppendTrace(
-        engine,
-        artifactPaths.engineTraceJsonl,
-        engine.createEngineTraceEvent({
-          run_id: runId,
-          site: 'kickstarter',
-          url,
-          page_key: pageKey,
-          stage: 'sample',
-          event: 'sample-succeeded',
-          status: 'succeeded',
-          cache_status: 'na',
-          input_summary: undefined,
-          output_summary: { candidate_count: Array.isArray(snapshot?.candidates) ? snapshot.candidates.length : 0 },
-          error: null,
-        }),
-      );
-      await safeWriteJson(engine, artifactPaths.domDistill, {
-        summary: {
-          totalCandidates: Array.isArray(snapshot?.candidates) ? snapshot.candidates.length : 0,
-          keptCandidates: Array.isArray(snapshot?.candidates) ? snapshot.candidates.length : 0,
+        html_snapshots_summary: {
+          s0: { ts: html_snapshots.s0.ts, byte_len: html_snapshots.s0.html.length },
+          s1: { ts: html_snapshots.s1.ts, byte_len: html_snapshots.s1.html.length },
+          s2: { ts: html_snapshots.s2.ts, byte_len: html_snapshots.s2.html.length },
         },
-        fieldHints: {},
-        promptCandidates: [],
-        dom_fingerprint: domFingerprint,
       });
     }
 
     const cacheFilePath = getRuleCacheFilePath();
-    const cacheRes = await engine.readRuleCacheDetailed(cacheFilePath, keyInput);
+    const llm = getLlmConfigFromEnv();
+    const learning_mode = getLearningModeFromEnv();
+    let learningRes: Awaited<
+      ReturnType<(typeof import('mkt-learning-engine'))['getOrLearnSelectorPlanFromHtmlSnapshotsV1']>
+    >;
+    try {
+      learningRes = await engine.getOrLearnSelectorPlanFromHtmlSnapshotsV1({
+        cacheFilePath,
+        site: 'kickstarter',
+        page_type: pageType,
+        url,
+        url_pattern: urlPattern,
+        schema_version: 'v1',
+        prompt_version: 'page_understanding_v1',
+        core_schema: [
+          { field: 'title', value_type: 'text', required: true },
+          { field: 'url', value_type: 'url', required: false },
+          { field: 'raw_id', value_type: 'text', required: false },
+          // KPI-ish fields (V1: keep as text; normalization can be added later)
+          { field: 'creator_name', value_type: 'text', required: false },
+          { field: 'category', value_type: 'text', required: false },
+          { field: 'location', value_type: 'text', required: false },
+          { field: 'blurb', value_type: 'text', required: false },
+          { field: 'backers', value_type: 'text', required: true },
+          { field: 'pledged_amount', value_type: 'text', required: true },
+          { field: 'goal_amount', value_type: 'text', required: true },
+          { field: 'percent_funded', value_type: 'text', required: true },
+          { field: 'currency', value_type: 'text', required: false },
+          { field: 'deadline', value_type: 'text', required: false },
+        ],
+        html_snapshots,
+        learning_mode,
+        llm,
+        fetchImpl: fetch,
+      });
+    } catch (e) {
+      if (artifactPaths && runId) {
+        const err = e instanceof Error ? e : new Error(String(e));
+        const isLlmUnavailable = e instanceof engine.LlmUnavailableError;
+        const isCacheRead = e instanceof engine.RuleCacheReadError;
+        const errorType = isLlmUnavailable ? 'llm_unavailable' : isCacheRead ? e.type : 'unknown';
+        const errorCode =
+          isLlmUnavailable && typeof (e as any).code === 'string' ? (e as any).code : undefined;
 
-    let selectorPlan =
-      cacheRes.status === 'hit'
-        ? cacheRes.entry.selector_plan
-        : null;
-
-    if (artifactPaths && runId) {
-      const cacheEvent =
-        cacheRes.status === 'hit'
-          ? { stage: 'cache' as const, event: 'cache-hit', status: 'succeeded' as const, cache_status: 'hit' as const }
-          : cacheRes.status === 'miss'
-            ? { stage: 'cache' as const, event: 'cache-miss', status: 'succeeded' as const, cache_status: 'miss' as const }
-            : { stage: 'cache' as const, event: cacheRes.error.type, status: 'failed' as const, cache_status: 'na' as const };
-
-      await safeAppendTrace(
-        engine,
-        artifactPaths.engineTraceJsonl,
-        engine.createEngineTraceEvent({
-          run_id: runId,
-          site: 'kickstarter',
-          url,
-          page_key: pageKey,
-          stage: cacheEvent.stage,
-          event: cacheEvent.event,
-          status: cacheEvent.status,
-          cache_status: cacheEvent.cache_status,
-          input_summary: undefined,
-          output_summary: undefined,
-          error: cacheRes.status === 'error' ? { type: cacheRes.error.type, message: cacheRes.error.message } : null,
-        }),
-      );
-    }
-
-    let understanding: unknown | null = null;
-    if (!selectorPlan) {
-      if (!canUseLlm()) {
-        // No cached rule and LLM disabled: keep crawl resilient; return empty extraction.
-        selectorPlan = { plans: [] };
-      } else {
-        if (artifactPaths && runId) {
-          await safeAppendTrace(
-            engine,
-            artifactPaths.engineTraceJsonl,
-            engine.createEngineTraceEvent({
-              run_id: runId,
-              site: 'kickstarter',
-              url,
-              page_key: pageKey,
-              stage: 'page_understanding',
-              event: 'llm_requested',
-              status: 'started',
-              cache_status: 'miss',
-              input_summary: { candidate_count: Array.isArray(snapshot?.candidates) ? snapshot.candidates.length : 0 },
-              output_summary: undefined,
-              error: null,
-            }),
-          );
-        }
-
-        try {
-          understanding = await engine.runPageUnderstandingV1({
-            fetchImpl: fetch,
-            endpoint: process.env.MKT_CRAWLER_LLM_ENDPOINT as string,
-            apiKey: process.env.MKT_CRAWLER_LLM_API_KEY as string,
-            model: process.env.MKT_CRAWLER_LLM_MODEL as string,
-            timeoutMs: process.env.MKT_CRAWLER_LLM_TIMEOUT_MS ? Number(process.env.MKT_CRAWLER_LLM_TIMEOUT_MS) : undefined,
-            input: {
-              site: 'kickstarter',
-              url,
-              page_title: snapshot?.page_title ?? '',
-              page_context: 'detail',
-              schema_version: 'v1',
-              prompt_version: 'page_understanding_v1',
-              url_pattern: urlPattern,
-              core_schema: [
-                { field: 'title', value_type: 'text', required: true },
-                { field: 'url', value_type: 'url', required: false },
-                { field: 'raw_id', value_type: 'text', required: false },
-              ],
-              field_hints: {},
-              token_budget: 8000,
-              dom_fingerprint: domFingerprint,
-              candidates: Array.isArray(snapshot?.candidates) ? snapshot.candidates : [],
-            },
-          });
-
-          selectorPlan = engine.buildSelectorPlanFromUnderstanding(understanding as any);
-          await engine.writeRuleCache(cacheFilePath, keyInput as any, { selector_plan: selectorPlan });
-
-          if (artifactPaths && runId) {
-            await safeWriteJson(engine, artifactPaths.pageUnderstanding, understanding);
-            await safeWriteJson(engine, artifactPaths.selectorPlan, selectorPlan);
-            await safeAppendTrace(
-              engine,
-              artifactPaths.engineTraceJsonl,
-              engine.createEngineTraceEvent({
-                run_id: runId,
-                site: 'kickstarter',
-                url,
-                page_key: pageKey,
-                stage: 'page_understanding',
-                event: 'llm_succeeded',
-                status: 'succeeded',
-                cache_status: 'miss',
-                input_summary: undefined,
-                output_summary: undefined,
-                error: null,
-              }),
-            );
-            await safeAppendTrace(
-              engine,
-              artifactPaths.engineTraceJsonl,
-              engine.createEngineTraceEvent({
-                run_id: runId,
-                site: 'kickstarter',
-                url,
-                page_key: pageKey,
-                stage: 'selector_plan',
-                event: 'rule_generated',
-                status: 'succeeded',
-                cache_status: 'miss',
-                input_summary: undefined,
-                output_summary: { fields: Array.isArray((selectorPlan as any)?.plans) ? (selectorPlan as any).plans.length : 0 },
-                error: null,
-              }),
-            );
-          }
-        } catch (e) {
-          if (artifactPaths && runId) {
-            const message = e instanceof Error ? e.message : String(e);
-            await safeAppendTrace(
-              engine,
-              artifactPaths.engineTraceJsonl,
-              engine.createEngineTraceEvent({
-                run_id: runId,
-                site: 'kickstarter',
-                url,
-                page_key: pageKey,
-                stage: 'page_understanding',
-                event: 'llm_failed',
-                status: 'failed',
-                cache_status: 'miss',
-                input_summary: undefined,
-                output_summary: undefined,
-                error: { type: 'llm_failed', message },
-              }),
-            );
-          }
-          selectorPlan = { plans: [] };
-        }
+        await safeAppendTrace(
+          engine,
+          artifactPaths.engineTraceJsonl,
+          engine.createEngineTraceEvent({
+            run_id: runId,
+            site: 'kickstarter',
+            url,
+            page_key: pageKey,
+            stage: 'selector_plan',
+            event: 'rule_learning_failed',
+            status: 'failed',
+            cache_status: 'na',
+            input_summary: { llm: llm ? { model: llm.model, endpoint: llm.endpoint } : null },
+            output_summary: undefined,
+            error: { type: errorType, message: err.message, code: errorCode },
+          }),
+        );
       }
-    } else if (artifactPaths) {
-      await safeWriteJson(engine, artifactPaths.selectorPlan, selectorPlan);
+      throw e;
     }
 
-    if (artifactPaths && runId) {
-      await safeAppendTrace(
-        engine,
-        artifactPaths.engineTraceJsonl,
-        engine.createEngineTraceEvent({
-          run_id: runId,
-          site: 'kickstarter',
-          url,
-          page_key: pageKey,
-          stage: 'rule_execution',
-          event: 'rule_execution_started',
-          status: 'started',
-          cache_status: cacheRes.status === 'hit' ? 'hit' : 'miss',
-          input_summary: undefined,
-          output_summary: undefined,
-          error: null,
-        }),
-      );
-    }
-
-    const selectorPlanForEval = selectorPlan ?? { plans: [] };
+    const selectorPlanForEval = learningRes.selector_plan ?? { plans: [] };
     const exec = (await page.evaluate(`
       (function () {
         function clean(v) { return String(v || '').replace(/\\s+/g, ' ').trim(); }
-        function firstText(selector) {
+        function getByPath(root, path) {
           try {
+            var parts = String(path || '').split('.').filter(Boolean);
+            var cur = root;
+            for (var i = 0; i < parts.length; i++) {
+              var key = parts[i];
+              if (cur == null) return null;
+              cur = cur[key];
+            }
+            return cur;
+          } catch (e) {
+            return null;
+          }
+        }
+        function firstValue(selector) {
+          try {
+            if (typeof selector === 'string' && selector.indexOf('__win__:') === 0) {
+              var p = selector.slice('__win__:'.length);
+              var v = getByPath(window, p);
+              if (v === null || v === undefined) return null;
+              if (typeof v === 'object') {
+                return clean(JSON.stringify(v));
+              }
+              return clean(String(v)) || null;
+            }
             var el = document.querySelector(selector);
             if (!el) return null;
+            var tag = (el.tagName || '').toLowerCase();
+            if (tag === 'meta') {
+              var c = el.getAttribute('content');
+              return clean(c || '') || null;
+            }
+            if (tag === 'link') {
+              var h = el.getAttribute('href');
+              return clean(h || '') || null;
+            }
+            if (tag === 'time') {
+              var dt = el.getAttribute('datetime');
+              if (dt) return clean(dt) || null;
+            }
             var text = clean(el.textContent || '');
             return text || null;
           } catch (e) {
@@ -480,7 +342,7 @@ cli({
           for (var j = 0; j < selectors.length; j++) {
             var s = String(selectors[j] || '').trim();
             if (!s) continue;
-            var t = firstText(s);
+            var t = firstValue(s);
             if (t) { got = t; used = s; strategy = 'selector'; break; }
           }
 
@@ -488,7 +350,7 @@ cli({
             for (var k = 0; k < fallback.length; k++) {
               var fs = String(fallback[k] || '').trim();
               if (!fs) continue;
-              var ft = firstText(fs);
+              var ft = firstValue(fs);
               if (ft) { got = ft; used = fs; strategy = 'fallback_selector'; break; }
             }
           }
@@ -502,10 +364,6 @@ cli({
           }
         }
 
-        // Always include url for downstream stability
-        values.url = location && location.href ? String(location.href) : null;
-        provenance.url = provenance.url || { strategy: 'computed' };
-
         return { values: values, provenance: provenance };
       })()
     `)) as ExecPayload;
@@ -516,8 +374,10 @@ cli({
     const core: Record<string, unknown> = {
       title: typeof values.title === 'string' ? values.title : null,
       url,
-      raw_id: typeof values.raw_id === 'string' ? values.raw_id : null,
-      creator_name: typeof values.creator_name === 'string' ? values.creator_name : null,
+      raw_id:
+        typeof values.raw_id === 'string'
+          ? values.raw_id
+          : rawIdFromKickstarterUrl(url),
     };
 
     const extra: Record<string, unknown> = {};
@@ -537,32 +397,36 @@ cli({
       extra,
     };
 
-    if (artifactPaths) {
-      await safeWriteJson(engine, artifactPaths.extractionResult, row);
-      await safeWriteJson(engine, artifactPaths.qualityReport, {
-        fields: [
-          { field: 'title', status: core.title ? 'accepted' : 'missing', reason: core.title ? 'present' : 'missing', raw_value: core.title ?? null, normalized_value: core.title ?? null, provenance_strategy: (provenance as any)?.title?.strategy ?? null },
-        ],
+    if (artifactPaths && runId) {
+      await safeWriteJson(engine, artifactPaths.selectorPlan, {
+        cache_status: learningRes.cache_status,
+        learning_method: (learningRes as any).learning_method,
+        llm_model: (learningRes as any).llm_model,
+        dom_fingerprint: learningRes.dom_fingerprint,
+        used_snapshot_key: learningRes.used_snapshot_key,
+        selector_plan: selectorPlanForEval,
       });
-      if (runId) {
-        await safeAppendTrace(
-          engine,
-          artifactPaths.engineTraceJsonl,
-          engine.createEngineTraceEvent({
-            run_id: runId,
-            site: 'kickstarter',
-            url,
-            page_key: pageKey,
-            stage: 'completed',
-            event: 'completed',
-            status: 'succeeded',
-            cache_status: cacheRes.status === 'hit' ? 'hit' : cacheRes.status === 'miss' ? 'miss' : 'na',
-            input_summary: undefined,
-            output_summary: { ok: true },
-            error: null,
-          }),
-        );
-      }
+      await safeWriteJson(engine, artifactPaths.extractionResult, row);
+    }
+
+    if (artifactPaths && runId) {
+      await safeAppendTrace(
+        engine,
+        artifactPaths.engineTraceJsonl,
+        engine.createEngineTraceEvent({
+          run_id: runId,
+          site: 'kickstarter',
+          url,
+          page_key: pageKey,
+          stage: 'completed',
+          event: 'completed',
+          status: 'succeeded',
+          cache_status: learningRes.cache_status,
+          input_summary: undefined,
+          output_summary: { duration_ms: Date.now() - startedAt.getTime() },
+          error: null,
+        }),
+      );
     }
 
     return row;
