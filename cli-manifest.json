@@ -3318,8 +3318,8 @@
   },
   {
     "site": "huodongxing",
-    "name": "search",
-    "description": "Search Huodongxing events (JSON-friendly fields for integrations)",
+    "name": "crawl",
+    "description": "Huodongxing list -> event detail crawl (schema-first, cache-first)",
     "domain": "www.huodongxing.com",
     "strategy": "cookie",
     "browser": true,
@@ -3329,30 +3329,24 @@
         "type": "str",
         "required": false,
         "positional": true,
-        "help": "Search keyword or full Huodongxing URL"
+        "help": "Search keyword or full Huodongxing search URL"
       },
       {
         "name": "limit",
         "type": "int",
-        "default": 20,
+        "default": 10,
         "required": false,
-        "help": "Number of results to return"
+        "help": "Number of events to crawl (max 50)"
       }
     ],
     "columns": [
       "title",
-      "author",
-      "signupCount",
-      "event_time",
-      "location",
-      "fee",
-      "published_at",
       "url",
       "raw_id"
     ],
     "type": "ts",
-    "modulePath": "huodongxing/search.js",
-    "sourceFile": "huodongxing/search.ts"
+    "modulePath": "huodongxing/crawl.js",
+    "sourceFile": "huodongxing/crawl.ts"
   },
   {
     "site": "hupu",

@@ -308,7 +308,9 @@ opencli cascade https://api.example.com/data         # Auto-probe: PUBLIC → CO
 
 - `indiegogo/search`: `opencli indiegogo search ... -f json`
 - `kickstarter/search`: `opencli kickstarter search ... -f json`
-- `huodongxing/search`: `opencli huodongxing search ... -f json`
+- `indiegogo/crawl`: `opencli indiegogo crawl ... -f json`
+- `kickstarter/crawl`: `opencli kickstarter crawl ... -f json`
+- `huodongxing/crawl`: `opencli huodongxing crawl ... -f json`
 
 ### Stable JSON fields
 
