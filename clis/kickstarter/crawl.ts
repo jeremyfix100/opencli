@@ -18,6 +18,8 @@ const DOMAIN = 'www.kickstarter.com';
 const BASE_URL = 'https://www.kickstarter.com';
 const DEFAULT_SEARCH_URL = BASE_URL + '/discover/advanced?sort=popularity';
 const MAX_LIMIT = 50;
+const DEFAULT_DETAIL_TIMEOUT_MS = 45_000;
+const MAX_LIST_PAGINATION_ROUNDS = 12;
 
 function pad2(n: number): string {
   return String(n).padStart(2, '0');
@@ -145,6 +147,116 @@ function getRuleCacheFilePath(): string {
   return path.join(os.homedir(), '.opencli', 'kickstarter-rule-cache.json');
 }
 
+function getDetailTimeoutMsFromEnv(): number {
+  const raw = process.env.OPENCLI_KICKSTARTER_DETAIL_TIMEOUT_MS?.trim();
+  if (!raw) return DEFAULT_DETAIL_TIMEOUT_MS;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_DETAIL_TIMEOUT_MS;
+  return Math.floor(n);
+}
+
+async function withTimeoutMs<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return promise;
+  return await new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+    promise.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      },
+    );
+  });
+}
+
+type KickstarterListEvalPayload = {
+  authRequired?: boolean;
+  items?: Array<Record<string, unknown>>;
+  hasLoadMore?: boolean;
+};
+
+async function evalKickstarterList(page: IPage): Promise<KickstarterListEvalPayload> {
+  return (await page.evaluate(`
+    (function () {
+      function clean(v) { return String(v || '').replace(/\\s+/g, ' ').trim(); }
+      function firstText(root, selectors) {
+        for (var i = 0; i < selectors.length; i++) {
+          var el = root && root.querySelector ? root.querySelector(selectors[i]) : null;
+          if (el && el.textContent) return clean(el.textContent);
+        }
+        return '';
+      }
+
+      var body = document.body;
+      var bodyText = clean(body && body.innerText ? body.innerText : '');
+      var authRequired = /log in|sign in|please sign in|please log in|captcha|verify|verification|risk|风控|登录|验证/i.test(bodyText);
+
+      var cards = document.querySelectorAll('a[href*=\"/projects/\"]');
+      var dedupe = Object.create(null);
+      var items = [];
+
+      for (var i = 0; i < cards.length; i++) {
+        var anchor = cards[i];
+        var href = (anchor.getAttribute && anchor.getAttribute('href')) || '';
+        var url = anchor.href || href || '';
+        var key = url || href;
+        if (!key || dedupe[key]) continue;
+        dedupe[key] = true;
+
+        var card = (anchor.closest && anchor.closest('article, li, div')) || anchor;
+        var title = clean(
+          (anchor.getAttribute && anchor.getAttribute('title'))
+            || firstText(anchor, ['h1', 'h2', 'h3', 'h4'])
+            || anchor.textContent
+        );
+        var rawMatch = url.match(/\\/projects\\/([^/?#]+\\/[^/?#]+)/) || url.match(/\\/projects\\/([^/?#]+)/);
+        var rawId = rawMatch ? clean(rawMatch[1]) : '';
+
+        if (!title && !url) continue;
+        items.push({ title: title || null, url: url || null, raw_id: rawId || null });
+      }
+
+      function hasLoadMore() {
+        var nodes = document.querySelectorAll('button,[role=\"button\"],a[role=\"button\"]');
+        for (var i = 0; i < nodes.length; i++) {
+          var el = nodes[i];
+          var t = clean(el && el.textContent ? el.textContent : '');
+          if (!t) continue;
+          if (/load\\s*more|more\\s*projects|載入更多|加载更多|更多/i.test(t)) return true;
+        }
+        return false;
+      }
+
+      return { authRequired: authRequired, items: items, hasLoadMore: hasLoadMore() };
+    })()
+  `)) as KickstarterListEvalPayload;
+}
+
+async function clickKickstarterLoadMore(page: IPage): Promise<boolean> {
+  const res = (await page.evaluate(`
+    (function () {
+      function clean(v) { return String(v || '').replace(/\\s+/g, ' ').trim(); }
+      function isDisabled(el) {
+        try { return Boolean(el && (el.disabled || el.getAttribute('aria-disabled') === 'true')); } catch (e) { return false; }
+      }
+      var nodes = document.querySelectorAll('button,[role=\"button\"],a[role=\"button\"]');
+      for (var i = 0; i < nodes.length; i++) {
+        var el = nodes[i];
+        var t = clean(el && el.textContent ? el.textContent : '');
+        if (!t) continue;
+        if (!/load\\s*more|more\\s*projects|載入更多|加载更多|更多/i.test(t)) continue;
+        if (isDisabled(el)) continue;
+        try { el.click(); return true; } catch (e) { /* continue */ }
+      }
+      return false;
+    })()
+  `)) as unknown;
+  return Boolean(res);
+}
+
 type ExecPayload = {
   values: Record<string, unknown>;
   provenance?: Record<string, unknown>;
@@ -190,6 +302,7 @@ cli({
   domain: DOMAIN,
   strategy: Strategy.COOKIE,
   browser: true,
+  timeoutSeconds: 30 * 60,
   args: [
     {
       name: 'query_or_url',
@@ -241,72 +354,41 @@ cli({
       // Best effort only
     }
 
-    const listPayload = (await page.evaluate(`
-      (function () {
-        function clean(v) { return String(v || '').replace(/\\s+/g, ' ').trim(); }
-        function firstText(root, selectors) {
-          for (var i = 0; i < selectors.length; i++) {
-            var el = root && root.querySelector ? root.querySelector(selectors[i]) : null;
-            if (el && el.textContent) return clean(el.textContent);
-          }
-          return '';
-        }
-        function firstAttr(root, selectors, attr) {
-          for (var i = 0; i < selectors.length; i++) {
-            var el = root && root.querySelector ? root.querySelector(selectors[i]) : null;
-            if (!el) continue;
-            var v = el.getAttribute ? el.getAttribute(attr) : '';
-            if (v) return clean(v);
-          }
-          return '';
-        }
+    const seen = new Map<string, { title: string | null; url: string; raw_id: string | null }>();
+    let authRequired = false;
+    let rounds = 0;
+    while (seen.size < limit && rounds < MAX_LIST_PAGINATION_ROUNDS) {
+      rounds += 1;
+      const payload = await evalKickstarterList(page);
+      authRequired = Boolean(payload?.authRequired);
+      const rawItems = Array.isArray(payload?.items) ? payload.items : [];
+      for (const item of rawItems) {
+        const abs = toAbsoluteUrl(item.url);
+        if (!abs) continue;
+        if (seen.has(abs)) continue;
+        seen.set(abs, {
+          title: typeof item.title === 'string' ? item.title : null,
+          url: abs,
+          raw_id: item.raw_id == null ? null : String(item.raw_id),
+        });
+        if (seen.size >= limit) break;
+      }
+      if (seen.size >= limit) break;
 
-        var body = document.body;
-        var bodyText = clean(body && body.innerText ? body.innerText : '');
-        var authRequired = /log in|sign in|please sign in|please log in|captcha|verify|verification|risk|风控|登录|验证/i.test(bodyText);
+      const before = seen.size;
+      try {
+        await page.autoScroll();
+      } catch {}
+      const clicked = payload?.hasLoadMore ? await clickKickstarterLoadMore(page) : false;
+      try {
+        await page.wait(clicked ? 2 : 1);
+      } catch {}
 
-        var cards = document.querySelectorAll('a[href*=\"/projects/\"]');
-        var dedupe = Object.create(null);
-        var items = [];
+      if (seen.size === before && !clicked && payload?.hasLoadMore !== true) break;
+    }
 
-        for (var i = 0; i < cards.length; i++) {
-          var anchor = cards[i];
-          var href = (anchor.getAttribute && anchor.getAttribute('href')) || '';
-          var url = anchor.href || href || '';
-          var key = url || href;
-          if (!key || dedupe[key]) continue;
-          dedupe[key] = true;
-
-          var card = (anchor.closest && anchor.closest('article, li, div')) || anchor;
-          var title = clean(
-            (anchor.getAttribute && anchor.getAttribute('title'))
-              || firstText(anchor, ['h1', 'h2', 'h3', 'h4'])
-              || anchor.textContent
-          );
-          var author = firstText(card, ['[class*=\"creator\"]', '[class*=\"byline\"]', '[class*=\"owner\"]']);
-          var publishedAt = firstAttr(card, ['time'], 'datetime') || firstText(card, ['time']);
-          var rawMatch = url.match(/\\/projects\\/([^/?#]+\\/[^/?#]+)/) || url.match(/\\/projects\\/([^/?#]+)/);
-          var rawId = rawMatch ? clean(rawMatch[1]) : '';
-
-          if (!title && !url) continue;
-          items.push({ title: title || null, url: url || null, author: author || null, published_at: publishedAt || null, raw_id: rawId || null });
-          if (items.length >= ${limit}) break;
-        }
-
-        return { authRequired: authRequired, items: items };
-      })()
-    `)) as { authRequired?: boolean; items?: Array<Record<string, unknown>> };
-
-    const rawItems = Array.isArray(listPayload?.items) ? listPayload.items : [];
-    const targets = rawItems
-      .map((item) => ({
-        title: typeof item.title === 'string' ? item.title : null,
-        url: toAbsoluteUrl(item.url),
-        raw_id: item.raw_id == null ? null : String(item.raw_id),
-      }))
-      .filter((x) => Boolean(x.url));
-
-    if (listPayload?.authRequired && targets.length === 0) {
+    const targets = [...seen.values()].slice(0, limit);
+    if (authRequired && targets.length === 0) {
       throw new AuthRequiredError(DOMAIN, 'AuthRequired: kickstarter/crawl requires login or passed verification');
     }
     if (targets.length === 0) {
@@ -323,6 +405,7 @@ cli({
     const urlPattern = '/projects/:creator/:slug';
 
     const rows: Array<Record<string, unknown>> = [];
+    const detailTimeoutMs = getDetailTimeoutMsFromEnv();
     const isRecoverable = (e: unknown): boolean => {
       const msg = e instanceof Error ? e.message : String(e);
       if (/authrequired/i.test(msg)) return false;
@@ -339,35 +422,11 @@ cli({
       const url = toAbsoluteProjectUrl(t.url!);
       const rawIdFallback = rawIdFromKickstarterUrl(url);
 
+      const beforeRowsLen = rows.length;
+      let finalError: unknown | null = null;
       for (let attempt = 0; attempt <= sched.maxRetries; attempt += 1) {
         try {
           await startGate.waitTurn();
-
-          await page.goto(url);
-          const s0html = await page.evaluate('document.documentElement.outerHTML');
-          try {
-            await page.wait(1);
-          } catch {}
-          const s1html = await page.evaluate('document.documentElement.outerHTML');
-          try {
-            await page.autoScroll();
-          } catch {}
-          try {
-            await page.wait(1);
-          } catch {}
-          const s2html = await page.evaluate('document.documentElement.outerHTML');
-
-          const ts = () => nowIsoUtc8();
-          const html_snapshots = {
-            s0: { ts: ts(), html: typeof s0html === 'string' ? s0html : String(s0html ?? '') },
-            s1: { ts: ts(), html: typeof s1html === 'string' ? s1html : String(s1html ?? '') },
-            s2: { ts: ts(), html: typeof s2html === 'string' ? s2html : String(s2html ?? '') },
-          } as const;
-          const htmlSnapshotsSummary = {
-            s0: { ts: html_snapshots.s0.ts, byte_len: html_snapshots.s0.html.length },
-            s1: { ts: html_snapshots.s1.ts, byte_len: html_snapshots.s1.html.length },
-            s2: { ts: html_snapshots.s2.ts, byte_len: html_snapshots.s2.html.length },
-          } as const;
 
           const attemptSuffix = attempt > 0 ? `@retry${attempt}` : '';
           const pageKey = `${pageType}:${urlPattern}#${rawIdFallback ?? String(i + 1)}${attemptSuffix}`;
@@ -381,57 +440,85 @@ cli({
                 })
               : null;
 
-          if (artifactPaths) {
-            const snapshotsDir = path.join(artifactPaths.root, 'snapshots');
-            await safeWriteText(path.join(snapshotsDir, 's0.html'), html_snapshots.s0.html);
-            await safeWriteText(path.join(snapshotsDir, 's1.html'), html_snapshots.s1.html);
-            await safeWriteText(path.join(snapshotsDir, 's2.html'), html_snapshots.s2.html);
-            await safeWriteJson(engine, artifactPaths.rawPage, {
-              site: 'kickstarter',
-              page_type: pageType,
-              url,
-              url_pattern: urlPattern,
-              html_snapshots_summary: htmlSnapshotsSummary,
-            });
-            await safeWriteJson(engine, path.join(artifactPaths.root, 'engine-input.json'), {
-              site: 'kickstarter',
-              page_type: pageType,
-              url,
-              url_pattern: urlPattern,
-              schema_version: 'v1',
-              prompt_version: 'page_understanding_v1',
-              cache: { file_path: cacheFilePath },
-              learning_mode: learning_mode ?? null,
-              llm: llm ? { endpoint: llm.endpoint, model: llm.model, timeoutMs: llm.timeoutMs ?? null } : null,
-              schema_first: {
-                enabled: true,
-                schema_registry_file_path: schemaRegistryFilePath,
-                schema_hint_prompt: schema_hint_prompt ?? null,
-              },
-              html_snapshots_summary: htmlSnapshotsSummary,
-              snapshots_saved: true,
-              scheduling: sched,
-              scheduling_seed: sched.randomSeed,
-              scheduling_attempt: attempt,
-            });
-          }
+          await withTimeoutMs(
+            (async () => {
+              await page.goto(url);
+              const s0html = await page.evaluate('document.documentElement.outerHTML');
+              try {
+                await page.wait(1);
+              } catch {}
+              const s1html = await page.evaluate('document.documentElement.outerHTML');
+              try {
+                await page.autoScroll();
+              } catch {}
+              try {
+                await page.wait(1);
+              } catch {}
+              const s2html = await page.evaluate('document.documentElement.outerHTML');
 
-          const startedAt = new Date();
-          const learningRes = await engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1({
-            schemaRegistryFilePath,
-            selectorCacheFilePath: cacheFilePath,
-            site: 'kickstarter',
-            page_type: pageType,
-            url,
-            url_pattern: urlPattern,
-            schema_version: 'v1',
-            prompt_version: 'page_understanding_v1',
-            ...(schema_hint_prompt !== undefined ? { schema_hint_prompt } : {}),
-            html_snapshots,
-            learning_mode,
-            llm,
-            fetchImpl: fetch,
-          });
+              const ts = () => nowIsoUtc8();
+              const html_snapshots = {
+                s0: { ts: ts(), html: typeof s0html === 'string' ? s0html : String(s0html ?? '') },
+                s1: { ts: ts(), html: typeof s1html === 'string' ? s1html : String(s1html ?? '') },
+                s2: { ts: ts(), html: typeof s2html === 'string' ? s2html : String(s2html ?? '') },
+              } as const;
+              const htmlSnapshotsSummary = {
+                s0: { ts: html_snapshots.s0.ts, byte_len: html_snapshots.s0.html.length },
+                s1: { ts: html_snapshots.s1.ts, byte_len: html_snapshots.s1.html.length },
+                s2: { ts: html_snapshots.s2.ts, byte_len: html_snapshots.s2.html.length },
+              } as const;
+
+              if (artifactPaths) {
+                const snapshotsDir = path.join(artifactPaths.root, 'snapshots');
+                await safeWriteText(path.join(snapshotsDir, 's0.html'), html_snapshots.s0.html);
+                await safeWriteText(path.join(snapshotsDir, 's1.html'), html_snapshots.s1.html);
+                await safeWriteText(path.join(snapshotsDir, 's2.html'), html_snapshots.s2.html);
+                await safeWriteJson(engine, artifactPaths.rawPage, {
+                  site: 'kickstarter',
+                  page_type: pageType,
+                  url,
+                  url_pattern: urlPattern,
+                  html_snapshots_summary: htmlSnapshotsSummary,
+                });
+                await safeWriteJson(engine, path.join(artifactPaths.root, 'engine-input.json'), {
+                  site: 'kickstarter',
+                  page_type: pageType,
+                  url,
+                  url_pattern: urlPattern,
+                  schema_version: 'v1',
+                  prompt_version: 'page_understanding_v1',
+                  cache: { file_path: cacheFilePath },
+                  learning_mode: learning_mode ?? null,
+                  llm: llm ? { endpoint: llm.endpoint, model: llm.model, timeoutMs: llm.timeoutMs ?? null } : null,
+                  schema_first: {
+                    enabled: true,
+                    schema_registry_file_path: schemaRegistryFilePath,
+                    schema_hint_prompt: schema_hint_prompt ?? null,
+                  },
+                  html_snapshots_summary: htmlSnapshotsSummary,
+                  snapshots_saved: true,
+                  scheduling: sched,
+                  scheduling_seed: sched.randomSeed,
+                  scheduling_attempt: attempt,
+                });
+              }
+
+              const startedAt = new Date();
+              const learningRes = await engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1({
+                schemaRegistryFilePath,
+                selectorCacheFilePath: cacheFilePath,
+                site: 'kickstarter',
+                page_type: pageType,
+                url,
+                url_pattern: urlPattern,
+                schema_version: 'v1',
+                prompt_version: 'page_understanding_v1',
+                ...(schema_hint_prompt !== undefined ? { schema_hint_prompt } : {}),
+                html_snapshots,
+                learning_mode,
+                llm,
+                fetchImpl: fetch,
+              });
 
           const anyBlocked =
             learningRes &&
@@ -525,7 +612,7 @@ cli({
               );
             }
 
-            break;
+            return;
           }
           const exec = (await page.evaluate(`
         (function () {
@@ -591,6 +678,26 @@ cli({
             if (tag === 'link') {
               var h = el.getAttribute('href');
               return clean(h || '') || null;
+            }
+            if (tag === 'img') {
+              var src = el.currentSrc || el.getAttribute('src');
+              return clean(src || '') || null;
+            }
+            if (tag === 'video') {
+              var vsrc = el.currentSrc || el.getAttribute('src');
+              return clean(vsrc || '') || null;
+            }
+            if (tag === 'source') {
+              var ssrc = el.getAttribute('src');
+              return clean(ssrc || '') || null;
+            }
+            if (tag === 'a') {
+              var ahref = el.getAttribute('href') || el.href;
+              return clean(ahref || '') || null;
+            }
+            if (tag === 'iframe') {
+              var ifsrc = el.getAttribute('src');
+              return clean(ifsrc || '') || null;
             }
             if (tag === 'time') {
               var dt = el.getAttribute('datetime');
@@ -757,11 +864,32 @@ cli({
           }),
         );
       }
+            })(),
+            detailTimeoutMs,
+            'kickstarter/crawl detail',
+          );
+
+          finalError = null;
           break;
         } catch (e) {
-          if (!isRecoverable(e) || attempt >= sched.maxRetries) throw e;
+          finalError = e;
+          if (!isRecoverable(e) || attempt >= sched.maxRetries) break;
           await sleepMs(backoffMs(sched, attempt + 1, rng));
         }
+      }
+
+      if (rows.length === beforeRowsLen && finalError) {
+        const msg = finalError instanceof Error ? finalError.message : String(finalError);
+        rows.push({
+          site: 'kickstarter',
+          page_type: pageType,
+          title: t.title ?? null,
+          url,
+          raw_id: rawIdFallback,
+          extra: {
+            error: { value: msg, value_type: 'text', provenance: { strategy: 'error' } },
+          },
+        });
       }
 
       doneCount += 1;
@@ -780,4 +908,3 @@ export const __test__ = {
   toAbsoluteUrl,
   rawIdFromKickstarterUrl,
 };
-

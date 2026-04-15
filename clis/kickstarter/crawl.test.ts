@@ -157,6 +157,163 @@ describe('kickstarter/crawl', () => {
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({ site: 'kickstarter', page_type: 'project_detail', title: 'P1', raw_id: 'a/p1' });
     expect(rows[1]).toMatchObject({ site: 'kickstarter', page_type: 'project_detail', title: 'P2', raw_id: 'b/p2' });
+    const execScript = vi.mocked(page.evaluate).mock.calls
+      .map(([arg]) => String(arg ?? ''))
+      .find((script) => script.includes('valueFromElement') && script.includes("tag === '"));
+    expect(execScript).toContain("tag === 'img'");
+    expect(execScript).toContain('currentSrc');
+    expect(execScript).toContain("tag === 'a'");
+    expect(execScript).toContain("getAttribute('href')");
+  });
+
+  it('list pagination: clicks load more until limit is reached', async () => {
+    const engine = await import('mkt-learning-engine');
+    vi.mocked(engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1).mockResolvedValue({
+      cache_status: 'hit',
+      learning_method: 'cache_hit',
+      dom_fingerprint: 'fp_test',
+      llm_model: null,
+      selector_plan: {
+        plans: [
+          { field: 'title', selectors: ['h1'], fallback_selectors: [], confidence: 0.9, reason: 't' },
+          { field: 'raw_id', selectors: ['meta[property=\"og:url\"]'], fallback_selectors: [], confidence: 0.8, reason: 'id' },
+        ],
+      },
+      used_snapshot_key: 's1',
+      snapshot_summaries: {
+        s0: { ts: '2026-04-11T00:00:00.000Z', byte_len: 1, text_len: 1, blocked: false },
+        s1: { ts: '2026-04-11T00:00:01.000Z', byte_len: 1, text_len: 1, blocked: false },
+        s2: { ts: '2026-04-11T00:00:02.000Z', byte_len: 1, text_len: 1, blocked: false },
+      },
+      core_schema: [],
+      core_schema_sig: 'sig_test',
+    } as any);
+
+    const page = createPage([
+      // list round 1: only 2 items, indicates hasLoadMore
+      {
+        authRequired: false,
+        hasLoadMore: true,
+        items: [
+          { title: 'P1', url: '/projects/a/p1', raw_id: 'a/p1' },
+          { title: 'P2', url: '/projects/b/p2', raw_id: 'b/p2' },
+        ],
+      },
+      // click load more returns true
+      true,
+      // list round 2: now 3 items
+      {
+        authRequired: false,
+        hasLoadMore: false,
+        items: [
+          { title: 'P1', url: '/projects/a/p1', raw_id: 'a/p1' },
+          { title: 'P2', url: '/projects/b/p2', raw_id: 'b/p2' },
+          { title: 'P3', url: '/projects/c/p3', raw_id: 'c/p3' },
+        ],
+      },
+      // detail 1 snapshots + exec
+      '<html><body>s0-1</body></html>',
+      '<html><body>s1-1</body></html>',
+      '<html><body>s2-1</body></html>',
+      { values: { title: 'P1', raw_id: 'a/p1' }, provenance: {} },
+      // detail 2 snapshots + exec
+      '<html><body>s0-2</body></html>',
+      '<html><body>s1-2</body></html>',
+      '<html><body>s2-2</body></html>',
+      { values: { title: 'P2', raw_id: 'b/p2' }, provenance: {} },
+      // detail 3 snapshots + exec
+      '<html><body>s0-3</body></html>',
+      '<html><body>s1-3</body></html>',
+      '<html><body>s2-3</body></html>',
+      { values: { title: 'P3', raw_id: 'c/p3' }, provenance: {} },
+    ]);
+
+    const rows = (await cmd.func!(page, {
+      query_or_url: 'AI',
+      limit: 3,
+      concurrency: 1,
+      min_interval_ms: 0,
+      interval_jitter_ms: 0,
+      after_each_ms: 0,
+      after_each_jitter_ms: 0,
+      cooldown_every: 0,
+      cooldown_min_ms: 0,
+      cooldown_jitter_ms: 0,
+      max_retries: 0,
+      retry_base_ms: 0,
+      retry_jitter_ms: 0,
+      random_seed: 1,
+    })) as Array<Record<string, unknown>>;
+    expect(rows).toHaveLength(3);
+    expect(rows.map((r) => r.title)).toEqual(['P1', 'P2', 'P3']);
+  });
+
+  it('detail failure: one page times out but crawl continues', async () => {
+
+    const engine = await import('mkt-learning-engine');
+    vi.mocked(engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1).mockResolvedValue({
+      cache_status: 'hit',
+      learning_method: 'cache_hit',
+      dom_fingerprint: 'fp_test',
+      llm_model: null,
+      selector_plan: { plans: [{ field: 'title', selectors: ['h1'], fallback_selectors: [], confidence: 0.9, reason: 't' }] },
+      used_snapshot_key: 's1',
+      snapshot_summaries: {
+        s0: { ts: '2026-04-11T00:00:00.000Z', byte_len: 1, text_len: 1, blocked: false },
+        s1: { ts: '2026-04-11T00:00:01.000Z', byte_len: 1, text_len: 1, blocked: false },
+        s2: { ts: '2026-04-11T00:00:02.000Z', byte_len: 1, text_len: 1, blocked: false },
+      },
+      core_schema: [],
+      core_schema_sig: 'sig_test',
+    } as any);
+
+    const evaluate = vi.fn()
+      // list payload (2 items)
+      .mockResolvedValueOnce({
+        authRequired: false,
+        items: [
+          { title: 'P1', url: '/projects/a/p1', raw_id: 'a/p1' },
+          { title: 'P2', url: '/projects/b/p2', raw_id: 'b/p2' },
+        ],
+      })
+      // detail 2 snapshots + exec (detail 1 will fail at goto)
+      .mockResolvedValueOnce('<html><body>s0-2</body></html>')
+      .mockResolvedValueOnce('<html><body>s1-2</body></html>')
+      .mockResolvedValueOnce('<html><body>s2-2</body></html>')
+      .mockResolvedValueOnce({ values: { title: 'P2', raw_id: 'b/p2' }, provenance: {} });
+
+    const page: IPage = {
+      goto: vi
+        .fn()
+        .mockResolvedValueOnce(undefined) // list
+        .mockRejectedValueOnce(new Error('navigation timed out')) // detail 1
+        .mockResolvedValueOnce(undefined), // detail 2
+      wait: vi.fn().mockResolvedValue(undefined),
+      evaluate,
+      autoScroll: vi.fn().mockResolvedValue(undefined),
+    } as unknown as IPage;
+
+    const rows = (await cmd.func!(page, {
+      query_or_url: 'AI',
+      limit: 2,
+      concurrency: 1,
+      min_interval_ms: 0,
+      interval_jitter_ms: 0,
+      after_each_ms: 0,
+      after_each_jitter_ms: 0,
+      cooldown_every: 0,
+      cooldown_min_ms: 0,
+      cooldown_jitter_ms: 0,
+      max_retries: 0,
+      retry_base_ms: 0,
+      retry_jitter_ms: 0,
+      random_seed: 1,
+    })) as Array<Record<string, any>>;
+
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.title).toBe('P1');
+    expect(rows[0]?.extra?.error?.value).toMatch(/timed out/i);
+    expect(rows[1]?.title).toBe('P2');
   });
 
   it('when OPENCLI_LEARNING_ARTIFACTS_DIR is set: writes per-url artifacts with distinct page keys', async () => {
@@ -214,10 +371,10 @@ describe('kickstarter/crawl', () => {
       const runIds = await fs.readdir(ksDir);
       const runDir = path.join(ksDir, runIds[0]!);
       const pages = await fs.readdir(runDir);
-      expect(pages.length).toBe(2);
+      const pageDirs = pages.filter((p) => p !== 'templates' && p !== 'scheduling.json');
+      expect(pageDirs.length).toBe(2);
     } finally {
       await fs.rm(artifactsDir, { recursive: true, force: true });
     }
   });
 });
-

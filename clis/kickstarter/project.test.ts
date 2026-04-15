@@ -138,6 +138,11 @@ describe('kickstarter/project', () => {
     expect(vi.mocked(page.evaluate).mock.calls[0]?.[0]).toBe('document.documentElement.outerHTML');
     expect(vi.mocked(page.evaluate).mock.calls[1]?.[0]).toBe('document.documentElement.outerHTML');
     expect(vi.mocked(page.evaluate).mock.calls[2]?.[0]).toBe('document.documentElement.outerHTML');
+    const execScript = String(vi.mocked(page.evaluate).mock.calls[3]?.[0] ?? '');
+    expect(execScript).toContain("tag === 'img'");
+    expect(execScript).toContain('currentSrc');
+    expect(execScript).toContain("tag === 'a'");
+    expect(execScript).toContain("getAttribute('href')");
 
     expect(engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1).toHaveBeenCalledTimes(1);
     const input = vi.mocked(engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1).mock.calls[0]?.[0] as any;
@@ -371,4 +376,3 @@ describe('kickstarter/project', () => {
     });
   });
 });
-

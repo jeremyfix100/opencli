@@ -387,6 +387,26 @@ cli({
               var h = el.getAttribute('href');
               return clean(h || '') || null;
             }
+            if (tag === 'img') {
+              var src = el.currentSrc || el.getAttribute('src');
+              return clean(src || '') || null;
+            }
+            if (tag === 'video') {
+              var vsrc = el.currentSrc || el.getAttribute('src');
+              return clean(vsrc || '') || null;
+            }
+            if (tag === 'source') {
+              var ssrc = el.getAttribute('src');
+              return clean(ssrc || '') || null;
+            }
+            if (tag === 'a') {
+              var ahref = el.getAttribute('href') || el.href;
+              return clean(ahref || '') || null;
+            }
+            if (tag === 'iframe') {
+              var ifsrc = el.getAttribute('src');
+              return clean(ifsrc || '') || null;
+            }
             if (tag === 'time') {
               var dt = el.getAttribute('datetime');
               if (dt) return clean(dt) || null;
@@ -534,4 +554,3 @@ cli({
     return row;
   },
 });
-
