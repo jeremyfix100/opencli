@@ -490,8 +490,11 @@ cli({
               if (artifactPaths) {
                 const snapshotsDir = path.join(artifactPaths.root, 'snapshots');
                 await safeWriteText(path.join(snapshotsDir, 's0.html'), html_snapshots.s0.html);
+                if (cancelled) return;
                 await safeWriteText(path.join(snapshotsDir, 's1.html'), html_snapshots.s1.html);
+                if (cancelled) return;
                 await safeWriteText(path.join(snapshotsDir, 's2.html'), html_snapshots.s2.html);
+                if (cancelled) return;
                 await safeWriteJson(engine, artifactPaths.rawPage, {
                   site: 'kickstarter',
                   page_type: pageType,
@@ -499,6 +502,7 @@ cli({
                   url_pattern: urlPattern,
                   html_snapshots_summary: htmlSnapshotsSummary,
                 });
+                if (cancelled) return;
                 await safeWriteJson(engine, path.join(artifactPaths.root, 'engine-input.json'), {
                   site: 'kickstarter',
                   page_type: pageType,
@@ -520,6 +524,7 @@ cli({
                   scheduling_seed: sched.randomSeed,
                   scheduling_attempt: attempt,
                 });
+                if (cancelled) return;
               }
 
               const startedAt = new Date();
@@ -598,6 +603,7 @@ cli({
                 schema_first: schemaFirstOut,
                 blocked: true,
               });
+              if (cancelled) return;
 
               const templateKeyFs = String(learningRes.dom_fingerprint || 'unknown').replace(/[^\w.-]+/g, '_');
               const templateRoot = path.join(artifactsBaseDir!, 'artifacts', 'kickstarter', runId, 'templates', templateKeyFs);
@@ -615,8 +621,10 @@ cli({
                 schema_first: schemaFirstOut,
                 selector_plan: selectorPlanForEval,
               });
+              if (cancelled) return;
 
               await safeWriteJson(engine, artifactPaths.extractionResult, row);
+              if (cancelled) return;
               await safeAppendTrace(
                 engine,
                 artifactPaths.engineTraceJsonl,
@@ -634,6 +642,7 @@ cli({
                   error: { type: 'blocked', message: 'blocked' },
                 }),
               );
+              if (cancelled) return;
             }
 
             return;
@@ -855,6 +864,7 @@ cli({
           selector_plan: learningRes.selector_plan,
           schema_first: schemaFirstOut,
         });
+        if (cancelled) return;
         // Template artifact: shared selector-plan for the same dom_fingerprint.
         // This matches the "learn once, reuse N times" mental model for list->detail crawl.
         const templateKeyFs = String(learningRes.dom_fingerprint || 'unknown').replace(/[^\w.-]+/g, '_');
@@ -873,7 +883,9 @@ cli({
           schema_first: schemaFirstOut,
           selector_plan: selectorPlanForEval,
         });
+        if (cancelled) return;
         await safeWriteJson(engine, artifactPaths.extractionResult, row);
+        if (cancelled) return;
         await safeAppendTrace(
           engine,
           artifactPaths.engineTraceJsonl,
@@ -891,6 +903,7 @@ cli({
             error: null,
           }),
         );
+        if (cancelled) return;
       }
             })(),
             detailTimeoutMs,
