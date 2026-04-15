@@ -311,7 +311,9 @@ cli({
   name: 'crawl',
   description: 'Kickstarter list -> project detail crawl (schema-first, cache-first)',
   domain: DOMAIN,
-  strategy: Strategy.COOKIE,
+  // Keep discover/list crawl usable without requiring a logged-in Chrome session.
+  // We still detect and surface auth/risk blocks via page content heuristics.
+  strategy: Strategy.PUBLIC,
   browser: true,
   timeoutSeconds: 30 * 60,
   args: [
