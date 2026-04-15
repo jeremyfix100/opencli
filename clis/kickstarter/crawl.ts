@@ -241,77 +241,176 @@ cli({
       // Best effort only
     }
 
-    const listPayload = (await page.evaluate(`
-      (function () {
-        function clean(v) { return String(v || '').replace(/\\s+/g, ' ').trim(); }
-        function firstText(root, selectors) {
-          for (var i = 0; i < selectors.length; i++) {
-            var el = root && root.querySelector ? root.querySelector(selectors[i]) : null;
-            if (el && el.textContent) return clean(el.textContent);
+    const runRoot = artifactsBaseDir && runId ? path.join(artifactsBaseDir, 'artifacts', 'kickstarter', runId) : null;
+
+    const seenUrlKeys = new Set<string>();
+    const targetItems: Array<{ title: string | null; url: string | null; raw_id: string | null }> = [];
+    const debugRounds: Array<Record<string, unknown>> = [];
+    let authRequiredDetected = false;
+    let roundsWithoutNew = 0;
+    const startedListAt = Date.now();
+
+    for (let round = 0; round < 30 && seenUrlKeys.size < limit; round += 1) {
+      const listPayload = (await page.evaluate(`
+        (function () {
+          function clean(v) { return String(v || '').replace(/\\s+/g, ' ').trim(); }
+          function firstText(root, selectors) {
+            for (var i = 0; i < selectors.length; i++) {
+              var el = root && root.querySelector ? root.querySelector(selectors[i]) : null;
+              if (el && el.textContent) return clean(el.textContent);
+            }
+            return '';
           }
-          return '';
-        }
-        function firstAttr(root, selectors, attr) {
-          for (var i = 0; i < selectors.length; i++) {
-            var el = root && root.querySelector ? root.querySelector(selectors[i]) : null;
-            if (!el) continue;
-            var v = el.getAttribute ? el.getAttribute(attr) : '';
-            if (v) return clean(v);
+          function firstAttr(root, selectors, attr) {
+            for (var i = 0; i < selectors.length; i++) {
+              var el = root && root.querySelector ? root.querySelector(selectors[i]) : null;
+              if (!el) continue;
+              var v = el.getAttribute ? el.getAttribute(attr) : '';
+              if (v) return clean(v);
+            }
+            return '';
           }
-          return '';
-        }
+          function findLoadMoreButton() {
+            try {
+              var btns = document.querySelectorAll('button, a[role=\"button\"]');
+              for (var i = 0; i < btns.length; i++) {
+                var b = btns[i];
+                if (!b) continue;
+                var text = clean(b.textContent || '');
+                if (!text) continue;
+                if (!/load more|show more|more projects|more results|see more/i.test(text)) continue;
+                var disabled = false;
+                try { disabled = !!(b.disabled || b.getAttribute('aria-disabled') === 'true'); } catch {}
+                if (disabled) continue;
+                return b;
+              }
+              return null;
+            } catch (e) {
+              return null;
+            }
+          }
 
-        var body = document.body;
-        var bodyText = clean(body && body.innerText ? body.innerText : '');
-        var authRequired = /log in|sign in|please sign in|please log in|captcha|verify|verification|risk|风控|登录|验证/i.test(bodyText);
+          var body = document.body;
+          var bodyText = clean(body && body.innerText ? body.innerText : '');
+          var authRequired = /log in|sign in|please sign in|please log in|captcha|verify|verification|risk|风控|登录|验证/i.test(bodyText);
 
-        var cards = document.querySelectorAll('a[href*=\"/projects/\"]');
-        var dedupe = Object.create(null);
-        var items = [];
+          var cards = document.querySelectorAll('a[href*=\"/projects/\"]');
+          var dedupe = Object.create(null);
+          var items = [];
 
-        for (var i = 0; i < cards.length; i++) {
-          var anchor = cards[i];
-          var href = (anchor.getAttribute && anchor.getAttribute('href')) || '';
-          var url = anchor.href || href || '';
-          var key = url || href;
-          if (!key || dedupe[key]) continue;
-          dedupe[key] = true;
+          for (var i = 0; i < cards.length; i++) {
+            var anchor = cards[i];
+            var href = (anchor.getAttribute && anchor.getAttribute('href')) || '';
+            var url = anchor.href || href || '';
+            var key = url || href;
+            if (!key || dedupe[key]) continue;
+            dedupe[key] = true;
 
-          var card = (anchor.closest && anchor.closest('article, li, div')) || anchor;
-          var title = clean(
-            (anchor.getAttribute && anchor.getAttribute('title'))
-              || firstText(anchor, ['h1', 'h2', 'h3', 'h4'])
-              || anchor.textContent
-          );
-          var author = firstText(card, ['[class*=\"creator\"]', '[class*=\"byline\"]', '[class*=\"owner\"]']);
-          var publishedAt = firstAttr(card, ['time'], 'datetime') || firstText(card, ['time']);
-          var rawMatch = url.match(/\\/projects\\/([^/?#]+\\/[^/?#]+)/) || url.match(/\\/projects\\/([^/?#]+)/);
-          var rawId = rawMatch ? clean(rawMatch[1]) : '';
+            var card = (anchor.closest && anchor.closest('article, li, div')) || anchor;
+            var title = clean(
+              (anchor.getAttribute && anchor.getAttribute('title'))
+                || firstText(anchor, ['h1', 'h2', 'h3', 'h4'])
+                || anchor.textContent
+            );
+            var rawMatch = url.match(/\\/projects\\/([^/?#]+\\/[^/?#]+)/) || url.match(/\\/projects\\/([^/?#]+)/);
+            var rawId = rawMatch ? clean(rawMatch[1]) : '';
 
-          if (!title && !url) continue;
-          items.push({ title: title || null, url: url || null, author: author || null, published_at: publishedAt || null, raw_id: rawId || null });
-          if (items.length >= ${limit}) break;
-        }
+            if (!title && !url) continue;
+            items.push({ title: title || null, url: url || null, raw_id: rawId || null });
+          }
 
-        return { authRequired: authRequired, items: items };
-      })()
-    `)) as { authRequired?: boolean; items?: Array<Record<string, unknown>> };
+          var clicked = false;
+          var btn = findLoadMoreButton();
+          if (btn) {
+            try { btn.scrollIntoView({ block: 'center' }); } catch {}
+            try { btn.click(); clicked = true; } catch {}
+          }
 
-    const rawItems = Array.isArray(listPayload?.items) ? listPayload.items : [];
-    const targets = rawItems
-      .map((item) => ({
-        title: typeof item.title === 'string' ? item.title : null,
-        url: toAbsoluteUrl(item.url),
-        raw_id: item.raw_id == null ? null : String(item.raw_id),
-      }))
-      .filter((x) => Boolean(x.url));
+          return {
+            authRequired: authRequired,
+            itemCount: items.length,
+            clickedLoadMore: clicked,
+            items: items
+          };
+        })()
+      `)) as {
+        authRequired?: boolean;
+        itemCount?: number;
+        clickedLoadMore?: boolean;
+        items?: Array<Record<string, unknown>>;
+      };
 
-    if (listPayload?.authRequired && targets.length === 0) {
+      authRequiredDetected = authRequiredDetected || Boolean(listPayload?.authRequired);
+
+      const rawItems = Array.isArray(listPayload?.items) ? listPayload.items : [];
+      let newCount = 0;
+      for (const item of rawItems) {
+        const abs = toAbsoluteUrl(item.url);
+        if (!abs) continue;
+        const key = abs;
+        if (seenUrlKeys.has(key)) continue;
+        seenUrlKeys.add(key);
+        newCount += 1;
+        targetItems.push({
+          title: typeof item.title === 'string' ? item.title : null,
+          url: abs,
+          raw_id: item.raw_id == null ? null : String(item.raw_id),
+        });
+        if (targetItems.length >= limit) break;
+      }
+
+      debugRounds.push({
+        ts: nowIsoUtc8(),
+        round,
+        dom_items: Number(listPayload?.itemCount ?? 0),
+        new_items: newCount,
+        total_items: targetItems.length,
+        clickedLoadMore: Boolean(listPayload?.clickedLoadMore),
+      });
+
+      if (newCount === 0) {
+        roundsWithoutNew += 1;
+      } else {
+        roundsWithoutNew = 0;
+      }
+
+      if (targetItems.length >= limit) break;
+      if (Date.now() - startedListAt > 60_000) break;
+      if (roundsWithoutNew >= 3 && !listPayload?.clickedLoadMore) break;
+
+      try {
+        await page.autoScroll();
+      } catch {}
+      try {
+        await page.wait(1);
+      } catch {}
+    }
+
+    if (runRoot) {
+      await safeWriteJson(engine, path.join(runRoot, 'list-collection.json'), {
+        ts: nowIsoUtc8(),
+        listUrl,
+        limit,
+        authRequiredDetected,
+        total: targetItems.length,
+        rounds: debugRounds,
+      });
+    }
+
+    if (authRequiredDetected && targetItems.length === 0) {
       throw new AuthRequiredError(DOMAIN, 'AuthRequired: kickstarter/crawl requires login or passed verification');
     }
-    if (targets.length === 0) {
+    if (targetItems.length === 0) {
       throw new EmptyResultError('kickstarter/crawl', 'No project URLs found on list page');
     }
+    if (targetItems.length < limit) {
+      throw new EmptyResultError(
+        'kickstarter/crawl',
+        `List page yielded only ${targetItems.length}/${limit} unique project URLs (no pagination/scroll match).`,
+      );
+    }
+
+    const targets = targetItems.slice(0, limit);
 
     const cacheFilePath = getRuleCacheFilePath();
     const llm = getLlmConfigFromEnv();
@@ -592,6 +691,26 @@ cli({
               var h = el.getAttribute('href');
               return clean(h || '') || null;
             }
+            if (tag === 'a') {
+              var ah = el.getAttribute('href') || (el.href || '');
+              return clean(ah || '') || null;
+            }
+            if (tag === 'img') {
+              var isrc = (el.currentSrc || '') || (el.getAttribute && el.getAttribute('src')) || '';
+              return clean(isrc || '') || null;
+            }
+            if (tag === 'video') {
+              var vsrc = (el.currentSrc || '') || (el.getAttribute && el.getAttribute('src')) || '';
+              return clean(vsrc || '') || null;
+            }
+            if (tag === 'source') {
+              var ssrc = (el.getAttribute && el.getAttribute('src')) || '';
+              return clean(ssrc || '') || null;
+            }
+            if (tag === 'iframe') {
+              var fsrc = (el.getAttribute && el.getAttribute('src')) || '';
+              return clean(fsrc || '') || null;
+            }
             if (tag === 'time') {
               var dt = el.getAttribute('datetime');
               if (dt) return clean(dt) || null;
@@ -780,4 +899,3 @@ export const __test__ = {
   toAbsoluteUrl,
   rawIdFromKickstarterUrl,
 };
-
