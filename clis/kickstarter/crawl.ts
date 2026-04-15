@@ -155,10 +155,21 @@ function getDetailTimeoutMsFromEnv(): number {
   return Math.floor(n);
 }
 
-async function withTimeoutMs<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+async function withTimeoutMs<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string,
+  onTimeout?: () => void,
+): Promise<T> {
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return promise;
   return await new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+    const timer = setTimeout(() => {
+      try {
+        onTimeout?.();
+      } finally {
+        reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+      }
+    }, timeoutMs);
     promise.then(
       (v) => {
         clearTimeout(timer);
@@ -440,21 +451,29 @@ cli({
                 })
               : null;
 
+          let cancelled = false;
           await withTimeoutMs(
             (async () => {
               await page.goto(url);
+              if (cancelled) return;
               const s0html = await page.evaluate('document.documentElement.outerHTML');
+              if (cancelled) return;
               try {
                 await page.wait(1);
               } catch {}
+              if (cancelled) return;
               const s1html = await page.evaluate('document.documentElement.outerHTML');
+              if (cancelled) return;
               try {
                 await page.autoScroll();
               } catch {}
+              if (cancelled) return;
               try {
                 await page.wait(1);
               } catch {}
+              if (cancelled) return;
               const s2html = await page.evaluate('document.documentElement.outerHTML');
+              if (cancelled) return;
 
               const ts = () => nowIsoUtc8();
               const html_snapshots = {
@@ -504,6 +523,7 @@ cli({
               }
 
               const startedAt = new Date();
+              if (cancelled) return;
               const learningRes = await engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1({
                 schemaRegistryFilePath,
                 selectorCacheFilePath: cacheFilePath,
@@ -519,12 +539,14 @@ cli({
                 llm,
                 fetchImpl: fetch,
               });
+              if (cancelled) return;
 
           const anyBlocked =
             learningRes &&
             (learningRes as any).snapshot_summaries &&
             Object.values((learningRes as any).snapshot_summaries as Record<string, any>).some((s) => Boolean(s?.blocked));
           const selectorPlanForEval = learningRes.selector_plan ?? { plans: [] };
+          if (cancelled) return;
           if (anyBlocked) {
             if (attempt < sched.maxRetries) {
               const err = new Error('blocked');
@@ -546,8 +568,10 @@ cli({
                 error: { value: 'blocked', value_type: 'text', provenance: { strategy: 'blocked' } },
               },
             };
+            if (cancelled) return;
             rows.push(row);
 
+            if (cancelled) return;
             if (artifactPaths && runId) {
               const schemaFirstOut = {
                 enabled: true,
@@ -614,6 +638,7 @@ cli({
 
             return;
           }
+          if (cancelled) return;
           const exec = (await page.evaluate(`
         (function () {
           function clean(v) { return String(v || '').replace(/\\s+/g, ' ').trim(); }
@@ -777,6 +802,7 @@ cli({
         exec && typeof exec === 'object' && exec.provenance && typeof exec.provenance === 'object'
           ? exec.provenance
           : {};
+      if (cancelled) return;
 
       const core: Record<string, unknown> = {
         title: typeof values.title === 'string' ? values.title : (t.title ?? null),
@@ -801,8 +827,10 @@ cli({
         ...core,
         extra,
       };
+      if (cancelled) return;
       rows.push(row);
 
+      if (cancelled) return;
       if (artifactPaths && runId) {
         const schemaFirstOut = {
           enabled: true,
@@ -867,6 +895,9 @@ cli({
             })(),
             detailTimeoutMs,
             'kickstarter/crawl detail',
+            () => {
+              cancelled = true;
+            },
           );
 
           finalError = null;

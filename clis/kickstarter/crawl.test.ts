@@ -79,6 +79,16 @@ function createPage(results: unknown[]): IPage {
   } as unknown as IPage;
 }
 
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 let cmd: CliCommand;
 
 beforeAll(() => {
@@ -164,6 +174,91 @@ describe('kickstarter/crawl', () => {
     expect(execScript).toContain('currentSrc');
     expect(execScript).toContain("tag === 'a'");
     expect(execScript).toContain("getAttribute('href')");
+  });
+
+  it('detail timeout: late goto resolution does not mutate returned rows', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.stubEnv('OPENCLI_KICKSTARTER_DETAIL_TIMEOUT_MS', '1');
+
+      const engine = await import('mkt-learning-engine');
+      vi.mocked(engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1).mockResolvedValue({
+        cache_status: 'hit',
+        learning_method: 'cache_hit',
+        dom_fingerprint: 'fp_timeout_guard',
+        llm_model: null,
+        selector_plan: {
+          plans: [
+            { field: 'title', selectors: ['h1'], fallback_selectors: [], confidence: 0.9, reason: 't' },
+            { field: 'raw_id', selectors: ['meta[property=\"og:url\"]'], fallback_selectors: [], confidence: 0.8, reason: 'id' },
+          ],
+        },
+        used_snapshot_key: 's1',
+        snapshot_summaries: {
+          s0: { ts: '2026-04-11T00:00:00.000Z', byte_len: 1, text_len: 1, blocked: false },
+          s1: { ts: '2026-04-11T00:00:01.000Z', byte_len: 1, text_len: 1, blocked: false },
+          s2: { ts: '2026-04-11T00:00:02.000Z', byte_len: 1, text_len: 1, blocked: false },
+        },
+        core_schema: [],
+        core_schema_sig: 'sig_timeout_guard',
+      } as any);
+
+      const firstGoto = createDeferred<void>();
+      const page: IPage = {
+        goto: vi
+          .fn()
+          .mockResolvedValueOnce(undefined)
+          .mockImplementationOnce(() => firstGoto.promise)
+          .mockResolvedValueOnce(undefined),
+        wait: vi.fn().mockResolvedValue(undefined),
+        evaluate: vi
+          .fn()
+          .mockResolvedValueOnce({
+            authRequired: false,
+            items: [
+              { title: 'P1', url: '/projects/a/p1', raw_id: 'a/p1' },
+              { title: 'P2', url: '/projects/b/p2', raw_id: 'b/p2' },
+            ],
+          })
+          .mockResolvedValueOnce('<html><body>s0-2</body></html>')
+          .mockResolvedValueOnce('<html><body>s1-2</body></html>')
+          .mockResolvedValueOnce('<html><body>s2-2</body></html>')
+          .mockResolvedValueOnce({ values: { title: 'P2', raw_id: 'b/p2' }, provenance: {} }),
+        autoScroll: vi.fn().mockResolvedValue(undefined),
+      } as unknown as IPage;
+
+      const rowsPromise = cmd.func!(page, {
+        query_or_url: 'AI',
+        limit: 2,
+        concurrency: 1,
+        min_interval_ms: 0,
+        interval_jitter_ms: 0,
+        after_each_ms: 0,
+        after_each_jitter_ms: 0,
+        cooldown_every: 0,
+        cooldown_min_ms: 0,
+        cooldown_jitter_ms: 0,
+        max_retries: 0,
+        retry_base_ms: 0,
+        retry_jitter_ms: 0,
+        random_seed: 1,
+      });
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(page.goto).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(1);
+      const rows = (await rowsPromise) as Array<Record<string, unknown>>;
+      expect(rows).toHaveLength(2);
+      expect(rows[0]).toMatchObject({ title: 'P1', raw_id: 'a/p1' });
+      expect(rows[1]).toMatchObject({ title: 'P2', raw_id: 'b/p2' });
+
+      const beforeLateResolve = rows.length;
+      firstGoto.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(rows).toHaveLength(beforeLateResolve);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('list pagination: clicks load more until limit is reached', async () => {
