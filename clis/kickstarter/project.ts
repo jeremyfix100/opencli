@@ -387,6 +387,26 @@ cli({
               var h = el.getAttribute('href');
               return clean(h || '') || null;
             }
+            if (tag === 'a') {
+              var ah = el.getAttribute('href') || (el.href || '');
+              return clean(ah || '') || null;
+            }
+            if (tag === 'img') {
+              var isrc = (el.currentSrc || '') || (el.getAttribute && el.getAttribute('src')) || '';
+              return clean(isrc || '') || null;
+            }
+            if (tag === 'video') {
+              var vsrc = (el.currentSrc || '') || (el.getAttribute && el.getAttribute('src')) || '';
+              return clean(vsrc || '') || null;
+            }
+            if (tag === 'source') {
+              var ssrc = (el.getAttribute && el.getAttribute('src')) || '';
+              return clean(ssrc || '') || null;
+            }
+            if (tag === 'iframe') {
+              var fsrc = (el.getAttribute && el.getAttribute('src')) || '';
+              return clean(fsrc || '') || null;
+            }
             if (tag === 'time') {
               var dt = el.getAttribute('datetime');
               if (dt) return clean(dt) || null;
@@ -534,4 +554,3 @@ cli({
     return row;
   },
 });
-
