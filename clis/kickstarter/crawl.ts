@@ -18,6 +18,8 @@ const DOMAIN = 'www.kickstarter.com';
 const BASE_URL = 'https://www.kickstarter.com';
 const DEFAULT_SEARCH_URL = BASE_URL + '/discover/advanced?sort=popularity';
 const MAX_LIMIT = 50;
+const LIST_COLLECTION_MAX_MS = 180_000;
+const LIST_COLLECTION_MAX_ROUNDS = 120;
 
 function pad2(n: number): string {
   return String(n).padStart(2, '0');
@@ -55,6 +57,30 @@ function resolveSearchUrl(input: unknown): string {
   if (!raw) return DEFAULT_SEARCH_URL;
   if (/^https?:\/\//i.test(raw)) return raw;
   return BASE_URL + '/discover/advanced?term=' + encodeURIComponent(raw) + '&sort=popularity';
+}
+
+function parseListPageNumber(url: string): number {
+  try {
+    const u = new URL(url);
+    const raw = u.searchParams.get('page');
+    const n = raw ? Number.parseInt(raw, 10) : NaN;
+    if (!Number.isFinite(n) || n <= 0) return 1;
+    return n;
+  } catch {
+    return 1;
+  }
+}
+
+function withListPageNumber(url: string, pageNumber: number): string {
+  const n = Math.max(1, Math.floor(pageNumber));
+  try {
+    const u = new URL(url);
+    u.searchParams.set('page', String(n));
+    return u.toString();
+  } catch {
+    const sep = url.includes('?') ? '&' : '?';
+    return `${url}${sep}page=${encodeURIComponent(String(n))}`;
+  }
 }
 
 function toAbsoluteUrl(value: unknown): string | null {
@@ -150,6 +176,67 @@ type ExecPayload = {
   provenance?: Record<string, unknown>;
 };
 
+async function autoScrollKickstarterList(page: IPage, opts?: { times?: number; delayMs?: number }): Promise<void> {
+  const times = Math.max(1, Math.min(8, Math.floor(opts?.times ?? 4)));
+  const delayMs = Math.max(250, Math.min(4000, Math.floor(opts?.delayMs ?? 1500)));
+  await page.evaluate(`
+    (async () => {
+      function isScrollable(el) {
+        if (!el || el === document.body || el === document.documentElement) return false;
+        try {
+          const style = window.getComputedStyle(el);
+          const oy = style.overflowY || '';
+          if (!/(auto|scroll)/i.test(oy)) return false;
+        } catch {}
+        try {
+          return (el.scrollHeight - el.clientHeight) > 300;
+        } catch {
+          return false;
+        }
+      }
+
+      function pickScrollContainer() {
+        const candidates = [];
+        const all = Array.from(document.querySelectorAll('main, [role="main"], section, div'));
+        for (let i = 0; i < all.length; i++) {
+          const el = all[i];
+          if (!isScrollable(el)) continue;
+          const score = Math.min(50000, (el.scrollHeight - el.clientHeight)) + Math.min(10000, el.clientHeight);
+          candidates.push({ el, score });
+        }
+        candidates.sort((a, b) => b.score - a.score);
+        return candidates[0]?.el || null;
+      }
+
+      async function waitForDomChange(timeoutMs) {
+        await new Promise(resolve => {
+          if (!document.body) return resolve(null);
+          let done = false;
+          const finish = () => { if (done) return; done = true; try { obs.disconnect(); } catch {} resolve(null); };
+          const obs = new MutationObserver(() => finish());
+          try { obs.observe(document.body, { childList: true, subtree: true, attributes: true }); } catch {}
+          setTimeout(finish, timeoutMs);
+        });
+      }
+
+      const scrollingEl = document.scrollingElement || document.documentElement;
+      for (let i = 0; i < ${times}; i++) {
+        const container = pickScrollContainer();
+        try {
+          if (container) container.scrollTop = container.scrollHeight;
+        } catch {}
+        try {
+          if (scrollingEl) scrollingEl.scrollTop = scrollingEl.scrollHeight;
+        } catch {}
+        try {
+          window.scrollTo(0, Math.max(document.body ? document.body.scrollHeight : 0, 10_000_000));
+        } catch {}
+        await waitForDomChange(${delayMs});
+      }
+    })()
+  `);
+}
+
 async function safeWriteJson(
   engine: typeof import('mkt-learning-engine'),
   filePath: string,
@@ -219,6 +306,8 @@ cli({
 
     const limit = normalizeLimit(kwargs.limit);
     const listUrl = resolveSearchUrl(kwargs.query_or_url);
+    let currentListUrl = listUrl;
+    let currentListPageNo = parseListPageNumber(currentListUrl);
 
     const sched = normalizeCrawlSchedulingOptions(kwargs as any);
     const rng = mulberry32(sched.randomSeed);
@@ -234,9 +323,9 @@ cli({
       });
     }
 
-    await page.goto(listUrl);
+    await page.goto(currentListUrl);
     try {
-      await page.wait(1);
+      await page.wait(2);
     } catch {
       // Best effort only
     }
@@ -246,11 +335,12 @@ cli({
     const seenUrlKeys = new Set<string>();
     const targetItems: Array<{ title: string | null; url: string | null; raw_id: string | null }> = [];
     const debugRounds: Array<Record<string, unknown>> = [];
+    const debugPagesVisited: Array<{ ts: string; url: string; page: number }> = [{ ts: nowIsoUtc8(), url: currentListUrl, page: currentListPageNo }];
     let authRequiredDetected = false;
     let roundsWithoutNew = 0;
     const startedListAt = Date.now();
 
-    for (let round = 0; round < 30 && seenUrlKeys.size < limit; round += 1) {
+    for (let round = 0; round < LIST_COLLECTION_MAX_ROUNDS && seenUrlKeys.size < limit; round += 1) {
       const listPayload = (await page.evaluate(`
         (function () {
           function clean(v) { return String(v || '').replace(/\\s+/g, ' ').trim(); }
@@ -277,8 +367,10 @@ cli({
                 var b = btns[i];
                 if (!b) continue;
                 var text = clean(b.textContent || '');
-                if (!text) continue;
-                if (!/load more|show more|more projects|more results|see more/i.test(text)) continue;
+                var aria = clean((b.getAttribute && (b.getAttribute('aria-label') || b.getAttribute('title'))) || '');
+                var label = (text + ' ' + aria).trim();
+                if (!label) continue;
+                if (!/load more|show more|more projects|more results|see more|next/i.test(label)) continue;
                 var disabled = false;
                 try { disabled = !!(b.disabled || b.getAttribute('aria-disabled') === 'true'); } catch {}
                 if (disabled) continue;
@@ -323,7 +415,16 @@ cli({
           var btn = findLoadMoreButton();
           if (btn) {
             try { btn.scrollIntoView({ block: 'center' }); } catch {}
-            try { btn.click(); clicked = true; } catch {}
+            try {
+              btn.click();
+              clicked = true;
+            } catch (e) {
+              try {
+                var ev = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
+                btn.dispatchEvent(ev);
+                clicked = true;
+              } catch {}
+            }
           }
 
           return {
@@ -362,6 +463,7 @@ cli({
       debugRounds.push({
         ts: nowIsoUtc8(),
         round,
+        list_page: currentListPageNo,
         dom_items: Number(listPayload?.itemCount ?? 0),
         new_items: newCount,
         total_items: targetItems.length,
@@ -375,14 +477,32 @@ cli({
       }
 
       if (targetItems.length >= limit) break;
-      if (Date.now() - startedListAt > 60_000) break;
-      if (roundsWithoutNew >= 3 && !listPayload?.clickedLoadMore) break;
+      if (Date.now() - startedListAt > LIST_COLLECTION_MAX_MS) break;
 
       try {
-        await page.autoScroll();
+        await autoScrollKickstarterList(page, { times: 4, delayMs: 1200 });
+      } catch {}
+
+      if (roundsWithoutNew >= 5 && !listPayload?.clickedLoadMore) {
+        const nextPageNo = currentListPageNo + 1;
+        const nextUrl = withListPageNumber(currentListUrl, nextPageNo);
+        if (nextUrl !== currentListUrl) {
+          currentListUrl = nextUrl;
+          currentListPageNo = nextPageNo;
+          debugPagesVisited.push({ ts: nowIsoUtc8(), url: currentListUrl, page: currentListPageNo });
+          try {
+            await page.goto(currentListUrl);
+            await page.wait(2);
+          } catch {}
+          roundsWithoutNew = 0;
+        }
+      }
+
+      try {
+        await page.autoScroll({ times: 3, delayMs: 1200 });
       } catch {}
       try {
-        await page.wait(1);
+        await page.wait(2);
       } catch {}
     }
 
@@ -390,6 +510,7 @@ cli({
       await safeWriteJson(engine, path.join(runRoot, 'list-collection.json'), {
         ts: nowIsoUtc8(),
         listUrl,
+        pagesVisited: debugPagesVisited,
         limit,
         authRequiredDetected,
         total: targetItems.length,
