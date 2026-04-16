@@ -94,6 +94,13 @@ afterEach(() => {
 });
 
 describe('kickstarter/crawl', () => {
+  it('normalizes limit up to 200', async () => {
+    expect((cmd as any)).toBeDefined();
+    const mod = await import('./crawl.js');
+    expect(mod.__test__.normalizeLimit(60)).toBe(60);
+    expect(mod.__test__.normalizeLimit(999)).toBe(200);
+  });
+
   it('list -> detail: crawls 2 urls and returns 2 rows', async () => {
     const engine = await import('mkt-learning-engine');
     vi.mocked(engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1).mockResolvedValue({
@@ -220,4 +227,3 @@ describe('kickstarter/crawl', () => {
     }
   });
 });
-

@@ -17,7 +17,7 @@ import {
 const DOMAIN = 'www.kickstarter.com';
 const BASE_URL = 'https://www.kickstarter.com';
 const DEFAULT_SEARCH_URL = BASE_URL + '/discover/advanced?sort=popularity';
-const MAX_LIMIT = 50;
+const MAX_LIMIT = 200;
 const LIST_COLLECTION_MAX_MS = 180_000;
 const LIST_COLLECTION_MAX_ROUNDS = 120;
 
@@ -284,7 +284,7 @@ cli({
       required: false,
       help: 'Search keyword or full Kickstarter discover URL',
     },
-    { name: 'limit', type: 'int', default: 10, help: 'Number of projects to crawl (max 50)' },
+    { name: 'limit', type: 'int', default: 10, help: 'Number of projects to crawl (max 200)' },
     { name: 'concurrency', type: 'int', default: 2, help: 'Scheduling: logical concurrency knob (default 2)' },
     { name: 'min_interval_ms', type: 'int', default: 1800, help: 'Scheduling: min interval before starting each detail' },
     { name: 'interval_jitter_ms', type: 'int', default: 1200, help: 'Scheduling: random jitter for start interval' },
