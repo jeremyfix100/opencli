@@ -4,6 +4,7 @@ import path from 'node:path';
 import { AuthRequiredError, EmptyResultError } from '@jackwener/opencli/errors';
 import { cli, Strategy } from '@jackwener/opencli/registry';
 import type { IPage } from '@jackwener/opencli/types';
+import { normalizeExtractedMediaFields } from '../_shared/media.js';
 
 const DOMAIN = 'www.huodongxing.com';
 const BASE_URL = 'https://www.huodongxing.com';
@@ -522,6 +523,7 @@ cli({
         site: 'huodongxing',
         page_type: pageType,
         ...core,
+        ...normalizeExtractedMediaFields(values, url),
         extra,
       };
       rows.push(row);
@@ -598,4 +600,3 @@ export const __test__ = {
   toAbsoluteUrl,
   rawIdFromHuodongxingUrl,
 };
-

@@ -159,6 +159,52 @@ describe('indiegogo/project', () => {
     expect(row.extra).toBeTypeOf('object');
   });
 
+  it('normalizes direct media urls from extracted values', async () => {
+    const engine = await import('mkt-learning-engine');
+    vi.mocked(engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1).mockResolvedValue({
+      cache_status: 'hit',
+      learning_method: 'cache_hit',
+      llm_model: null,
+      dom_fingerprint: 'fp_test',
+      selector_plan: {
+        plans: [
+          { field: 'title', selectors: ['h1'], fallback_selectors: [] },
+          { field: 'raw_id', selectors: ['meta[property="og:url"]'], fallback_selectors: [] },
+        ],
+      },
+      used_snapshot_key: 's2',
+      snapshot_summaries: {
+        s0: { ts: '2026-04-11T00:00:00.000Z', byte_len: 1, text_len: 1, blocked: false },
+        s1: { ts: '2026-04-11T00:00:01.000Z', byte_len: 1, text_len: 1, blocked: false },
+        s2: { ts: '2026-04-11T00:00:02.000Z', byte_len: 1, text_len: 1, blocked: false },
+      },
+      core_schema: [],
+      core_schema_sig: 'sig_test',
+    } as any);
+
+    const page = createPage([
+      '<html><body>s0</body></html>',
+      '<html><body>s1</body></html>',
+      '<html><body>s2</body></html>',
+      {
+        values: {
+          title: 'Media Demo',
+          raw_id: 'id_123',
+          main_image_url: 'https://cdn.example.com/media/cover.png',
+          videoUrl: 'https://cdn.example.com/media/master.m3u8?token=abc123',
+        },
+        provenance: {},
+      },
+    ]);
+
+    const row = (await cmd.func!(page, {
+      url: 'https://www.indiegogo.com/en/projects/demo/the-campaign',
+    })) as Record<string, unknown>;
+
+    expect(row.primary_image_url).toBe('https://cdn.example.com/media/cover.png');
+    expect(row.primary_video_url).toBe('https://cdn.example.com/media/master.m3u8?token=abc123');
+  });
+
   it('raw_id fallback: derives from url when missing in extracted values', async () => {
     const engine = await import('mkt-learning-engine');
     vi.mocked(engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1).mockResolvedValue({
@@ -243,4 +289,3 @@ describe('indiegogo/project', () => {
     }
   });
 });
-
