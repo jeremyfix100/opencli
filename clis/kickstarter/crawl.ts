@@ -176,6 +176,64 @@ type ExecPayload = {
   provenance?: Record<string, unknown>;
 };
 
+type ExtractionWarning = {
+  flagged: boolean;
+  codes: string[];
+  message: string | null;
+};
+
+function isNonEmptyValue(value: unknown): boolean {
+  if (value == null) return false;
+  if (typeof value === 'string') return value.trim().length > 0;
+  return true;
+}
+
+function buildExtractionWarning(input: {
+  snapshotSummaries?: Record<string, { text_len?: number | null } | null | undefined> | null;
+  values: Record<string, unknown>;
+  selectorPlan?: { plans?: Array<{ field?: unknown }> } | null;
+  listTitle?: string | null;
+}): ExtractionWarning {
+  const codes: string[] = [];
+  const summaries = input.snapshotSummaries ? Object.values(input.snapshotSummaries) : [];
+  const maxTextLen = summaries.reduce((max, row) => {
+    const n = Number(row?.text_len ?? 0);
+    return Number.isFinite(n) ? Math.max(max, n) : max;
+  }, 0);
+  if (maxTextLen > 0 && maxTextLen < 1200) {
+    codes.push('low_visible_text');
+  }
+
+  const nonCoreExtractedCount = Object.entries(input.values).filter(([field, value]) => {
+    if (field === 'title' || field === 'url' || field === 'raw_id') return false;
+    return isNonEmptyValue(value);
+  }).length;
+  if (nonCoreExtractedCount === 0) {
+    codes.push('no_detail_fields_extracted');
+  }
+
+  const selectorFields = Array.isArray(input.selectorPlan?.plans)
+    ? input.selectorPlan!.plans.map((plan) => String(plan?.field ?? '')).filter(Boolean)
+    : [];
+  const matchedFields = Object.entries(input.values).filter(([, value]) => isNonEmptyValue(value)).map(([field]) => field);
+  if (selectorFields.length > 0 && matchedFields.length <= 2) {
+    codes.push('very_sparse_selector_matches');
+  }
+
+  const extractedTitle = typeof input.values.title === 'string' ? input.values.title.trim() : '';
+  const listTitle = typeof input.listTitle === 'string' ? input.listTitle.trim() : '';
+  if (!extractedTitle && listTitle) {
+    codes.push('title_from_list_fallback');
+  }
+
+  const uniqueCodes = Array.from(new Set(codes));
+  return {
+    flagged: uniqueCodes.length > 0,
+    codes: uniqueCodes,
+    message: uniqueCodes.length > 0 ? `Suspicious extraction: ${uniqueCodes.join(', ')}` : null,
+  };
+}
+
 async function autoScrollKickstarterList(page: IPage, opts?: { times?: number; delayMs?: number }): Promise<void> {
   const times = Math.max(1, Math.min(8, Math.floor(opts?.times ?? 4)));
   const delayMs = Math.max(250, Math.min(4000, Math.floor(opts?.delayMs ?? 1500)));
@@ -928,6 +986,30 @@ cli({
         };
       }
 
+      const extractionWarning = buildExtractionWarning({
+        snapshotSummaries: (learningRes as any)?.snapshot_summaries ?? null,
+        values,
+        selectorPlan: selectorPlanForEval,
+        listTitle: t.title ?? null,
+      });
+      if (extractionWarning.flagged) {
+        extra.warning = {
+          value: true,
+          value_type: 'boolean',
+          provenance: { strategy: 'heuristic_warning' },
+        };
+        extra.warning_codes = {
+          value: extractionWarning.codes.join(','),
+          value_type: 'text',
+          provenance: { strategy: 'heuristic_warning' },
+        };
+        extra.warning_message = {
+          value: extractionWarning.message,
+          value_type: 'text',
+          provenance: { strategy: 'heuristic_warning' },
+        };
+      }
+
       const row = {
         site: 'kickstarter',
         page_type: pageType,
@@ -959,6 +1041,9 @@ cli({
           snapshot_summaries: learningRes.snapshot_summaries,
           selector_plan: learningRes.selector_plan,
           schema_first: schemaFirstOut,
+          warning: extractionWarning.flagged
+            ? { codes: extractionWarning.codes, message: extractionWarning.message }
+            : null,
         });
         // Template artifact: shared selector-plan for the same dom_fingerprint.
         // This matches the "learn once, reuse N times" mental model for list->detail crawl.
@@ -992,7 +1077,10 @@ cli({
             status: 'succeeded',
             cache_status: learningRes.cache_status,
             input_summary: undefined,
-            output_summary: { duration_ms: Date.now() - startedAt.getTime() },
+            output_summary: {
+              duration_ms: Date.now() - startedAt.getTime(),
+              warning_codes: extractionWarning.flagged ? extractionWarning.codes : [],
+            },
             error: null,
           }),
         );
@@ -1019,4 +1107,5 @@ export const __test__ = {
   resolveSearchUrl,
   toAbsoluteUrl,
   rawIdFromKickstarterUrl,
+  buildExtractionWarning,
 };

@@ -166,6 +166,66 @@ describe('kickstarter/crawl', () => {
     expect(rows[1]).toMatchObject({ site: 'kickstarter', page_type: 'project_detail', title: 'P2', raw_id: 'b/p2' });
   });
 
+  it('adds non-blocking warning fields for suspicious sparse extraction', async () => {
+    const engine = await import('mkt-learning-engine');
+    vi.mocked(engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1).mockResolvedValue({
+      cache_status: 'hit',
+      learning_method: 'cache_hit',
+      dom_fingerprint: 'fp_warn',
+      llm_model: null,
+      selector_plan: {
+        plans: [
+          { field: 'title', selectors: ['h1'], fallback_selectors: [], confidence: 0.9, reason: 't' },
+          { field: 'creator_name', selectors: ['.creator'], fallback_selectors: [], confidence: 0.9, reason: 'c' },
+          { field: 'category', selectors: ['.category'], fallback_selectors: [], confidence: 0.9, reason: 'cat' },
+        ],
+      },
+      used_snapshot_key: 's1',
+      snapshot_summaries: {
+        s0: { ts: '2026-04-11T00:00:00.000Z', byte_len: 10, text_len: 100, blocked: false },
+        s1: { ts: '2026-04-11T00:00:01.000Z', byte_len: 10, text_len: 120, blocked: false },
+        s2: { ts: '2026-04-11T00:00:02.000Z', byte_len: 10, text_len: 110, blocked: false },
+      },
+      core_schema: [],
+      core_schema_sig: 'sig_warn',
+    } as any);
+
+    const page = createPage([
+      {
+        authRequired: false,
+        items: [{ title: 'Fallback Title', url: '/projects/a/p1', raw_id: 'a/p1' }],
+      },
+      '<html><body>s0-1</body></html>',
+      '<html><body>s1-1</body></html>',
+      '<html><body>s2-1</body></html>',
+      { values: { raw_id: 'a/p1' }, provenance: {} },
+    ]);
+
+    const rows = (await cmd.func!(page, {
+      query_or_url: 'AI',
+      limit: 1,
+      concurrency: 1,
+      min_interval_ms: 0,
+      interval_jitter_ms: 0,
+      after_each_ms: 0,
+      after_each_jitter_ms: 0,
+      cooldown_every: 0,
+      cooldown_min_ms: 0,
+      cooldown_jitter_ms: 0,
+      max_retries: 0,
+      retry_base_ms: 0,
+      retry_jitter_ms: 0,
+      random_seed: 1,
+    })) as Array<Record<string, any>>;
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].title).toBe('Fallback Title');
+    expect(rows[0].extra.warning.value).toBe(true);
+    expect(rows[0].extra.warning_codes.value).toContain('low_visible_text');
+    expect(rows[0].extra.warning_codes.value).toContain('no_detail_fields_extracted');
+    expect(rows[0].extra.warning_codes.value).toContain('title_from_list_fallback');
+  });
+
   it('when OPENCLI_LEARNING_ARTIFACTS_DIR is set: writes per-url artifacts with distinct page keys', async () => {
     const artifactsDir = await fs.mkdtemp(path.join(os.tmpdir(), 'opencli-artifacts-'));
     vi.stubEnv('OPENCLI_LEARNING_ARTIFACTS_DIR', artifactsDir);
