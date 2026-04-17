@@ -101,6 +101,32 @@ describe('kickstarter/crawl', () => {
     expect(mod.__test__.normalizeLimit(999)).toBe(200);
   });
 
+  it('advances paginated list as soon as current page is exhausted', async () => {
+    const mod = await import('./crawl.js');
+    expect(
+      mod.__test__.shouldAdvanceListPage({
+        domItemCount: 18,
+        newCount: 0,
+        clickedLoadMore: false,
+        seenOnCurrentPage: 18,
+        roundsWithoutNew: 1,
+      }),
+    ).toBe(true);
+  });
+
+  it('does not advance while current page can still yield more items', async () => {
+    const mod = await import('./crawl.js');
+    expect(
+      mod.__test__.shouldAdvanceListPage({
+        domItemCount: 18,
+        newCount: 0,
+        clickedLoadMore: false,
+        seenOnCurrentPage: 12,
+        roundsWithoutNew: 1,
+      }),
+    ).toBe(false);
+  });
+
   it('list -> detail: crawls 2 urls and returns 2 rows', async () => {
     const engine = await import('mkt-learning-engine');
     vi.mocked(engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1).mockResolvedValue({
@@ -164,6 +190,99 @@ describe('kickstarter/crawl', () => {
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({ site: 'kickstarter', page_type: 'project_detail', title: 'P1', raw_id: 'a/p1' });
     expect(rows[1]).toMatchObject({ site: 'kickstarter', page_type: 'project_detail', title: 'P2', raw_id: 'b/p2' });
+  });
+
+  it('advances to the next list page after the current page is exhausted', async () => {
+    const engine = await import('mkt-learning-engine');
+    vi.mocked(engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1).mockResolvedValue({
+      cache_status: 'hit',
+      learning_method: 'cache_hit',
+      dom_fingerprint: 'fp_paged',
+      llm_model: null,
+      selector_plan: {
+        plans: [
+          { field: 'title', selectors: ['h1'], fallback_selectors: [], confidence: 0.9, reason: 't' },
+          { field: 'raw_id', selectors: ['meta[property=\"og:url\"]'], fallback_selectors: [], confidence: 0.8, reason: 'id' },
+        ],
+      },
+      used_snapshot_key: 's1',
+      snapshot_summaries: {
+        s0: { ts: '2026-04-11T00:00:00.000Z', byte_len: 1, text_len: 1, blocked: false },
+        s1: { ts: '2026-04-11T00:00:01.000Z', byte_len: 1, text_len: 1, blocked: false },
+        s2: { ts: '2026-04-11T00:00:02.000Z', byte_len: 1, text_len: 1, blocked: false },
+      },
+      core_schema: [],
+      core_schema_sig: 'sig_paged',
+    } as any);
+
+    let currentUrl = '';
+    const listRoundsByUrl = new Map<string, number>();
+    const page = {
+      goto: vi.fn(async (url: string) => {
+        currentUrl = url;
+      }),
+      wait: vi.fn().mockResolvedValue(undefined),
+      autoScroll: vi.fn().mockResolvedValue(undefined),
+      evaluate: vi.fn(async (script: string) => {
+        if (script.includes('items: items')) {
+          const round = listRoundsByUrl.get(currentUrl) ?? 0;
+          listRoundsByUrl.set(currentUrl, round + 1);
+          if (currentUrl.endsWith('?page=2')) {
+            return {
+              authRequired: false,
+              itemCount: 2,
+              clickedLoadMore: false,
+              items: [
+                { title: 'P3', url: '/projects/c/p3', raw_id: 'c/p3' },
+                { title: 'P4', url: '/projects/d/p4', raw_id: 'd/p4' },
+              ],
+            };
+          }
+          return {
+            authRequired: false,
+            itemCount: 2,
+            clickedLoadMore: false,
+            items:
+              round === 0
+                ? [
+                    { title: 'P1', url: '/projects/a/p1', raw_id: 'a/p1' },
+                    { title: 'P2', url: '/projects/b/p2', raw_id: 'b/p2' },
+                  ]
+                : [
+                    { title: 'P1', url: '/projects/a/p1', raw_id: 'a/p1' },
+                    { title: 'P2', url: '/projects/b/p2', raw_id: 'b/p2' },
+                  ],
+          };
+        }
+        if (script === 'document.documentElement.outerHTML') {
+          return `<html><body>${currentUrl}</body></html>`;
+        }
+        const rawId = currentUrl.match(/\/projects\/([^/?#]+\/[^/?#]+)/)?.[1] ?? null;
+        const title = rawId ? rawId.split('/')[1]?.toUpperCase() : null;
+        return { values: { title, raw_id: rawId }, provenance: {} };
+      }),
+    } as unknown as IPage;
+
+    const rows = (await cmd.func!(page, {
+      query_or_url: 'https://www.kickstarter.com/discover/categories/design/product%20design',
+      limit: 4,
+      concurrency: 1,
+      min_interval_ms: 0,
+      interval_jitter_ms: 0,
+      after_each_ms: 0,
+      after_each_jitter_ms: 0,
+      cooldown_every: 0,
+      cooldown_min_ms: 0,
+      cooldown_jitter_ms: 0,
+      max_retries: 0,
+      retry_base_ms: 0,
+      retry_jitter_ms: 0,
+      random_seed: 1,
+    })) as Array<Record<string, unknown>>;
+
+    expect(rows).toHaveLength(4);
+    expect(page.goto).toHaveBeenCalledWith('https://www.kickstarter.com/discover/categories/design/product%20design');
+    expect(page.goto).toHaveBeenCalledWith('https://www.kickstarter.com/discover/categories/design/product%20design?page=2');
   });
 
   it('adds non-blocking warning fields for suspicious sparse extraction', async () => {
@@ -280,8 +399,9 @@ describe('kickstarter/crawl', () => {
       const ksDir = path.join(artifactsDir, 'artifacts', 'kickstarter');
       const runIds = await fs.readdir(ksDir);
       const runDir = path.join(ksDir, runIds[0]!);
-      const pages = await fs.readdir(runDir);
-      expect(pages.length).toBe(2);
+      const entries = await fs.readdir(runDir, { withFileTypes: true });
+      const pageDirs = entries.filter((entry) => entry.isDirectory() && entry.name.startsWith('project_detail_'));
+      expect(pageDirs.length).toBe(2);
     } finally {
       await fs.rm(artifactsDir, { recursive: true, force: true });
     }

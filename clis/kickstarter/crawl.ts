@@ -18,7 +18,7 @@ const DOMAIN = 'www.kickstarter.com';
 const BASE_URL = 'https://www.kickstarter.com';
 const DEFAULT_SEARCH_URL = BASE_URL + '/discover/advanced?sort=popularity';
 const MAX_LIMIT = 200;
-const LIST_COLLECTION_MAX_MS = 180_000;
+const LIST_COLLECTION_MAX_MS = 600_000;
 const LIST_COLLECTION_MAX_ROUNDS = 120;
 
 function pad2(n: number): string {
@@ -81,6 +81,20 @@ function withListPageNumber(url: string, pageNumber: number): string {
     const sep = url.includes('?') ? '&' : '?';
     return `${url}${sep}page=${encodeURIComponent(String(n))}`;
   }
+}
+
+function shouldAdvanceListPage(input: {
+  domItemCount: number;
+  newCount: number;
+  clickedLoadMore: boolean;
+  seenOnCurrentPage: number;
+  roundsWithoutNew: number;
+}): boolean {
+  if (input.clickedLoadMore) return false;
+  if (input.newCount > 0) return false;
+  if (input.domItemCount <= 0) return input.roundsWithoutNew >= 2;
+  if (input.seenOnCurrentPage >= input.domItemCount) return true;
+  return input.roundsWithoutNew >= 5;
 }
 
 function toAbsoluteUrl(value: unknown): string | null {
@@ -396,7 +410,9 @@ cli({
     const debugPagesVisited: Array<{ ts: string; url: string; page: number }> = [{ ts: nowIsoUtc8(), url: currentListUrl, page: currentListPageNo }];
     let authRequiredDetected = false;
     let roundsWithoutNew = 0;
+    let seenOnCurrentPage = 0;
     const startedListAt = Date.now();
+    let listStopReason: string | null = null;
 
     for (let round = 0; round < LIST_COLLECTION_MAX_ROUNDS && seenUrlKeys.size < limit; round += 1) {
       const listPayload = (await page.evaluate(`
@@ -517,6 +533,7 @@ cli({
         });
         if (targetItems.length >= limit) break;
       }
+      seenOnCurrentPage += newCount;
 
       debugRounds.push({
         ts: nowIsoUtc8(),
@@ -534,26 +551,43 @@ cli({
         roundsWithoutNew = 0;
       }
 
-      if (targetItems.length >= limit) break;
-      if (Date.now() - startedListAt > LIST_COLLECTION_MAX_MS) break;
+      if (targetItems.length >= limit) {
+        listStopReason = 'limit_reached';
+        break;
+      }
 
       try {
         await autoScrollKickstarterList(page, { times: 4, delayMs: 1200 });
       } catch {}
 
-      if (roundsWithoutNew >= 5 && !listPayload?.clickedLoadMore) {
+      if (
+        shouldAdvanceListPage({
+          domItemCount: Number(listPayload?.itemCount ?? 0),
+          newCount,
+          clickedLoadMore: Boolean(listPayload?.clickedLoadMore),
+          seenOnCurrentPage,
+          roundsWithoutNew,
+        })
+      ) {
         const nextPageNo = currentListPageNo + 1;
         const nextUrl = withListPageNumber(currentListUrl, nextPageNo);
         if (nextUrl !== currentListUrl) {
           currentListUrl = nextUrl;
           currentListPageNo = nextPageNo;
+          seenOnCurrentPage = 0;
           debugPagesVisited.push({ ts: nowIsoUtc8(), url: currentListUrl, page: currentListPageNo });
           try {
             await page.goto(currentListUrl);
             await page.wait(2);
           } catch {}
           roundsWithoutNew = 0;
+          continue;
         }
+      }
+
+      if (Date.now() - startedListAt > LIST_COLLECTION_MAX_MS) {
+        listStopReason = 'time_budget_exceeded';
+        break;
       }
 
       try {
@@ -564,6 +598,15 @@ cli({
       } catch {}
     }
 
+    if (!listStopReason) {
+      listStopReason =
+        targetItems.length >= limit
+          ? 'limit_reached'
+          : Date.now() - startedListAt > LIST_COLLECTION_MAX_MS
+            ? 'time_budget_exceeded'
+            : 'round_budget_exceeded';
+    }
+
     if (runRoot) {
       await safeWriteJson(engine, path.join(runRoot, 'list-collection.json'), {
         ts: nowIsoUtc8(),
@@ -572,6 +615,7 @@ cli({
         limit,
         authRequiredDetected,
         total: targetItems.length,
+        stopReason: listStopReason,
         rounds: debugRounds,
       });
     }
@@ -1105,6 +1149,7 @@ export const __test__ = {
   MAX_LIMIT,
   normalizeLimit,
   resolveSearchUrl,
+  shouldAdvanceListPage,
   toAbsoluteUrl,
   rawIdFromKickstarterUrl,
   buildExtractionWarning,
