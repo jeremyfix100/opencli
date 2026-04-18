@@ -6,6 +6,11 @@ import { log } from '@jackwener/opencli/logger';
 import { traceDebug } from './debug-trace.js';
 import { distillDomLearningCandidates, type DomLearningField, type DomLearningSnapshot } from './dom-distill.js';
 
+/**
+ * @deprecated
+ * Legacy selector-learning path. Production crawlers should use the schema-first pipeline in
+ * `mkt-learning-engine` (`getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1`) via the site CLIs.
+ */
 export type LearnedSelectorSet = Record<DomLearningField, string[]>;
 export type LearnedSelectorFieldPlan = {
   selectors: string[];
@@ -158,6 +163,7 @@ function parseLearnedSelectorPlanRecord(raw: unknown): LearnedSelectorPlan | nul
   return Object.values(learned).some((item) => item.selectors.length > 0 || item.fallback_selectors.length > 0) ? learned : null;
 }
 
+/** @deprecated Use schema-first pipeline in `mkt-learning-engine` instead. */
 export function parseLearnedSelectorPlan(raw: unknown): LearnedSelectorPlan | null {
   try {
     const parsed = parseSelectorPlan(JSON.stringify(raw));
@@ -167,12 +173,14 @@ export function parseLearnedSelectorPlan(raw: unknown): LearnedSelectorPlan | nu
   }
 }
 
+/** @deprecated Use schema-first pipeline in `mkt-learning-engine` instead. */
 export function parseLearnedSelectorSet(raw: unknown): LearnedSelectorSet | null {
   const plan = parseLearnedSelectorPlan(raw);
   if (!plan) return null;
   return toLearnedSelectorSet(plan);
 }
 
+/** @deprecated Use schema-first pipeline in `mkt-learning-engine` instead. */
 export async function readSelectorLearningCache(): Promise<SelectorLearningCache | null> {
   try {
     const raw = await readFile(getCacheFilePath(), 'utf-8');
@@ -251,6 +259,7 @@ function canUseLlmLearning(): boolean {
   );
 }
 
+/** @deprecated Use schema-first pipeline in `mkt-learning-engine` instead. */
 export async function learnSelectorsFromSnapshot(input: {
   site: string;
   fingerprint: string;
@@ -261,6 +270,7 @@ export async function learnSelectorsFromSnapshot(input: {
   return toLearnedSelectorSet(plan);
 }
 
+/** @deprecated Use schema-first pipeline in `mkt-learning-engine` instead. */
 export async function learnSelectorPlanFromSnapshot(input: {
   site: string;
   fingerprint: string;
@@ -477,6 +487,7 @@ export async function learnSelectorPlanFromSnapshot(input: {
   }
 }
 
+/** @deprecated Use schema-first pipeline in `mkt-learning-engine` instead. */
 export function defaultSelectorSet(): LearnedSelectorSet {
   return emptySelectorSet();
 }
