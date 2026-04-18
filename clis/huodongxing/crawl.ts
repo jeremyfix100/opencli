@@ -4,6 +4,7 @@ import path from 'node:path';
 import { AuthRequiredError, EmptyResultError } from '@jackwener/opencli/errors';
 import { cli, Strategy } from '@jackwener/opencli/registry';
 import type { IPage } from '@jackwener/opencli/types';
+import { normalizeExtractedMediaFields } from '../_shared/media.js';
 
 const DOMAIN = 'www.huodongxing.com';
 const BASE_URL = 'https://www.huodongxing.com';
@@ -65,6 +66,16 @@ function rawIdFromHuodongxingUrl(url: string): string | null {
   } catch {
     return null;
   }
+}
+
+function normalizeEventRawId(input: { rawIdFromUrl: string | null; extractedRawId: unknown }): string | null {
+  const fromUrl = input.rawIdFromUrl ? String(input.rawIdFromUrl).trim() : null;
+  const extracted = typeof input.extractedRawId === 'string' ? input.extractedRawId.trim() : null;
+
+  // Prefer stable URL-derived id. Only accept extracted ids if they look like real numeric ids.
+  if (fromUrl) return fromUrl;
+  if (extracted && /^[0-9]{6,}$/.test(extracted)) return extracted;
+  return null;
 }
 
 function getLlmConfigFromEnv():
@@ -504,7 +515,7 @@ cli({
       const core: Record<string, unknown> = {
         title: typeof values.title === 'string' ? values.title : (t.title ?? null),
         url,
-        raw_id: typeof values.raw_id === 'string' ? values.raw_id : rawId,
+        raw_id: normalizeEventRawId({ rawIdFromUrl: rawId, extractedRawId: (values as any)?.raw_id }),
       };
 
       const extra: Record<string, unknown> = {};
@@ -522,6 +533,7 @@ cli({
         site: 'huodongxing',
         page_type: pageType,
         ...core,
+        ...normalizeExtractedMediaFields(values, url),
         extra,
       };
       rows.push(row);
@@ -598,4 +610,3 @@ export const __test__ = {
   toAbsoluteUrl,
   rawIdFromHuodongxingUrl,
 };
-

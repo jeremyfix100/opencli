@@ -17,9 +17,10 @@ import {
 const DOMAIN = 'www.kickstarter.com';
 const BASE_URL = 'https://www.kickstarter.com';
 const DEFAULT_SEARCH_URL = BASE_URL + '/discover/advanced?sort=popularity';
-const MAX_LIMIT = 50;
+const MAX_LIMIT = 200;
 const DEFAULT_DETAIL_TIMEOUT_MS = 45_000;
-const MAX_LIST_PAGINATION_ROUNDS = 12;
+const LIST_COLLECTION_MAX_MS = 600_000;
+const LIST_COLLECTION_MAX_ROUNDS = 120;
 
 function pad2(n: number): string {
   return String(n).padStart(2, '0');
@@ -57,6 +58,44 @@ function resolveSearchUrl(input: unknown): string {
   if (!raw) return DEFAULT_SEARCH_URL;
   if (/^https?:\/\//i.test(raw)) return raw;
   return BASE_URL + '/discover/advanced?term=' + encodeURIComponent(raw) + '&sort=popularity';
+}
+
+function parseListPageNumber(url: string): number {
+  try {
+    const u = new URL(url);
+    const raw = u.searchParams.get('page');
+    const n = raw ? Number.parseInt(raw, 10) : NaN;
+    if (!Number.isFinite(n) || n <= 0) return 1;
+    return n;
+  } catch {
+    return 1;
+  }
+}
+
+function withListPageNumber(url: string, pageNumber: number): string {
+  const n = Math.max(1, Math.floor(pageNumber));
+  try {
+    const u = new URL(url);
+    u.searchParams.set('page', String(n));
+    return u.toString();
+  } catch {
+    const sep = url.includes('?') ? '&' : '?';
+    return `${url}${sep}page=${encodeURIComponent(String(n))}`;
+  }
+}
+
+function shouldAdvanceListPage(input: {
+  domItemCount: number;
+  newCount: number;
+  clickedLoadMore: boolean;
+  seenOnCurrentPage: number;
+  roundsWithoutNew: number;
+}): boolean {
+  if (input.clickedLoadMore) return false;
+  if (input.newCount > 0) return false;
+  if (input.domItemCount <= 0) return input.roundsWithoutNew >= 2;
+  if (input.seenOnCurrentPage >= input.domItemCount) return true;
+  return input.roundsWithoutNew >= 5;
 }
 
 function toAbsoluteUrl(value: unknown): string | null {
@@ -273,6 +312,125 @@ type ExecPayload = {
   provenance?: Record<string, unknown>;
 };
 
+type ExtractionWarning = {
+  flagged: boolean;
+  codes: string[];
+  message: string | null;
+};
+
+function isNonEmptyValue(value: unknown): boolean {
+  if (value == null) return false;
+  if (typeof value === 'string') return value.trim().length > 0;
+  return true;
+}
+
+function buildExtractionWarning(input: {
+  snapshotSummaries?: Record<string, { text_len?: number | null } | null | undefined> | null;
+  values: Record<string, unknown>;
+  selectorPlan?: { plans?: Array<{ field?: unknown }> } | null;
+  listTitle?: string | null;
+}): ExtractionWarning {
+  const codes: string[] = [];
+  const summaries = input.snapshotSummaries ? Object.values(input.snapshotSummaries) : [];
+  const maxTextLen = summaries.reduce((max, row) => {
+    const n = Number(row?.text_len ?? 0);
+    return Number.isFinite(n) ? Math.max(max, n) : max;
+  }, 0);
+  if (maxTextLen > 0 && maxTextLen < 1200) {
+    codes.push('low_visible_text');
+  }
+
+  const nonCoreExtractedCount = Object.entries(input.values).filter(([field, value]) => {
+    if (field === 'title' || field === 'url' || field === 'raw_id') return false;
+    return isNonEmptyValue(value);
+  }).length;
+  if (nonCoreExtractedCount === 0) {
+    codes.push('no_detail_fields_extracted');
+  }
+
+  const selectorFields = Array.isArray(input.selectorPlan?.plans)
+    ? input.selectorPlan!.plans.map((plan) => String(plan?.field ?? '')).filter(Boolean)
+    : [];
+  const matchedFields = Object.entries(input.values).filter(([, value]) => isNonEmptyValue(value)).map(([field]) => field);
+  if (selectorFields.length > 0 && matchedFields.length <= 2) {
+    codes.push('very_sparse_selector_matches');
+  }
+
+  const extractedTitle = typeof input.values.title === 'string' ? input.values.title.trim() : '';
+  const listTitle = typeof input.listTitle === 'string' ? input.listTitle.trim() : '';
+  if (!extractedTitle && listTitle) {
+    codes.push('title_from_list_fallback');
+  }
+
+  const uniqueCodes = Array.from(new Set(codes));
+  return {
+    flagged: uniqueCodes.length > 0,
+    codes: uniqueCodes,
+    message: uniqueCodes.length > 0 ? `Suspicious extraction: ${uniqueCodes.join(', ')}` : null,
+  };
+}
+
+async function autoScrollKickstarterList(page: IPage, opts?: { times?: number; delayMs?: number }): Promise<void> {
+  const times = Math.max(1, Math.min(8, Math.floor(opts?.times ?? 4)));
+  const delayMs = Math.max(250, Math.min(4000, Math.floor(opts?.delayMs ?? 1500)));
+  await page.evaluate(`
+    (async () => {
+      function isScrollable(el) {
+        if (!el || el === document.body || el === document.documentElement) return false;
+        try {
+          const style = window.getComputedStyle(el);
+          const oy = style.overflowY || '';
+          if (!/(auto|scroll)/i.test(oy)) return false;
+        } catch {}
+        try {
+          return (el.scrollHeight - el.clientHeight) > 300;
+        } catch {
+          return false;
+        }
+      }
+
+      function pickScrollContainer() {
+        const candidates = [];
+        const all = Array.from(document.querySelectorAll('main, [role="main"], section, div'));
+        for (let i = 0; i < all.length; i++) {
+          const el = all[i];
+          if (!isScrollable(el)) continue;
+          const score = Math.min(50000, (el.scrollHeight - el.clientHeight)) + Math.min(10000, el.clientHeight);
+          candidates.push({ el, score });
+        }
+        candidates.sort((a, b) => b.score - a.score);
+        return candidates[0]?.el || null;
+      }
+
+      async function waitForDomChange(timeoutMs) {
+        await new Promise(resolve => {
+          if (!document.body) return resolve(null);
+          let done = false;
+          const finish = () => { if (done) return; done = true; try { obs.disconnect(); } catch {} resolve(null); };
+          const obs = new MutationObserver(() => finish());
+          try { obs.observe(document.body, { childList: true, subtree: true, attributes: true }); } catch {}
+          setTimeout(finish, timeoutMs);
+        });
+      }
+
+      const scrollingEl = document.scrollingElement || document.documentElement;
+      for (let i = 0; i < ${times}; i++) {
+        const container = pickScrollContainer();
+        try {
+          if (container) container.scrollTop = container.scrollHeight;
+        } catch {}
+        try {
+          if (scrollingEl) scrollingEl.scrollTop = scrollingEl.scrollHeight;
+        } catch {}
+        try {
+          window.scrollTo(0, Math.max(document.body ? document.body.scrollHeight : 0, 10_000_000));
+        } catch {}
+        await waitForDomChange(${delayMs});
+      }
+    })()
+  `);
+}
+
 async function safeWriteJson(
   engine: typeof import('mkt-learning-engine'),
   filePath: string,
@@ -323,7 +481,7 @@ cli({
       required: false,
       help: 'Search keyword or full Kickstarter discover URL',
     },
-    { name: 'limit', type: 'int', default: 10, help: 'Number of projects to crawl (max 50)' },
+    { name: 'limit', type: 'int', default: 10, help: 'Number of projects to crawl (max 200)' },
     { name: 'concurrency', type: 'int', default: 2, help: 'Scheduling: logical concurrency knob (default 2)' },
     { name: 'min_interval_ms', type: 'int', default: 1800, help: 'Scheduling: min interval before starting each detail' },
     { name: 'interval_jitter_ms', type: 'int', default: 1200, help: 'Scheduling: random jitter for start interval' },
@@ -342,16 +500,19 @@ cli({
     const engine = await import('mkt-learning-engine');
     const artifactsBaseDir = getArtifactsBaseDir();
     const runId = artifactsBaseDir ? makeRunId() : null;
+    const runRoot =
+      artifactsBaseDir && runId ? path.join(artifactsBaseDir, 'artifacts', 'kickstarter', runId) : null;
 
     const limit = normalizeLimit(kwargs.limit);
     const listUrl = resolveSearchUrl(kwargs.query_or_url);
+    let currentListUrl = listUrl;
+    let currentListPageNo = parseListPageNumber(currentListUrl);
 
     const sched = normalizeCrawlSchedulingOptions(kwargs as any);
     const rng = mulberry32(sched.randomSeed);
     const startGate = createStartGate(sched, rng);
     const cooldownGate = createCooldownGate(sched, rng);
-    if (artifactsBaseDir && runId) {
-      const runRoot = path.join(artifactsBaseDir, 'artifacts', 'kickstarter', runId);
+    if (runRoot) {
       await safeWriteJson(engine, path.join(runRoot, 'scheduling.json'), {
         ts: nowIsoUtc8(),
         site: 'kickstarter',
@@ -360,53 +521,243 @@ cli({
       });
     }
 
-    await page.goto(listUrl);
+    await page.goto(currentListUrl);
     try {
-      await page.wait(1);
+      await page.wait(2);
     } catch {
       // Best effort only
     }
 
-    const seen = new Map<string, { title: string | null; url: string; raw_id: string | null }>();
-    let authRequired = false;
-    let rounds = 0;
-    while (seen.size < limit && rounds < MAX_LIST_PAGINATION_ROUNDS) {
-      rounds += 1;
-      const payload = await evalKickstarterList(page);
-      authRequired = Boolean(payload?.authRequired);
-      const rawItems = Array.isArray(payload?.items) ? payload.items : [];
+    const seenUrlKeys = new Set<string>();
+    const targetItems: Array<{ title: string | null; url: string | null; raw_id: string | null }> = [];
+    const debugRounds: Array<Record<string, unknown>> = [];
+    const debugPagesVisited: Array<{ ts: string; url: string; page: number }> = [{ ts: nowIsoUtc8(), url: currentListUrl, page: currentListPageNo }];
+    let authRequiredDetected = false;
+    let roundsWithoutNew = 0;
+    let seenOnCurrentPage = 0;
+    const startedListAt = Date.now();
+    let listStopReason: string | null = null;
+
+    for (let round = 0; round < LIST_COLLECTION_MAX_ROUNDS && seenUrlKeys.size < limit; round += 1) {
+      const listPayload = (await page.evaluate(`
+        (function () {
+          function clean(v) { return String(v || '').replace(/\\s+/g, ' ').trim(); }
+          function firstText(root, selectors) {
+            for (var i = 0; i < selectors.length; i++) {
+              var el = root && root.querySelector ? root.querySelector(selectors[i]) : null;
+              if (el && el.textContent) return clean(el.textContent);
+            }
+            return '';
+          }
+          function firstAttr(root, selectors, attr) {
+            for (var i = 0; i < selectors.length; i++) {
+              var el = root && root.querySelector ? root.querySelector(selectors[i]) : null;
+              if (!el) continue;
+              var v = el.getAttribute ? el.getAttribute(attr) : '';
+              if (v) return clean(v);
+            }
+            return '';
+          }
+          function findLoadMoreButton() {
+            try {
+              var btns = document.querySelectorAll('button, a[role=\"button\"]');
+              for (var i = 0; i < btns.length; i++) {
+                var b = btns[i];
+                if (!b) continue;
+                var text = clean(b.textContent || '');
+                var aria = clean((b.getAttribute && (b.getAttribute('aria-label') || b.getAttribute('title'))) || '');
+                var label = (text + ' ' + aria).trim();
+                if (!label) continue;
+                if (!/load more|show more|more projects|more results|see more|next/i.test(label)) continue;
+                var disabled = false;
+                try { disabled = !!(b.disabled || b.getAttribute('aria-disabled') === 'true'); } catch {}
+                if (disabled) continue;
+                return b;
+              }
+              return null;
+            } catch (e) {
+              return null;
+            }
+          }
+
+          var body = document.body;
+          var bodyText = clean(body && body.innerText ? body.innerText : '');
+          var authRequired = /log in|sign in|please sign in|please log in|captcha|verify|verification|risk|风控|登录|验证/i.test(bodyText);
+
+          var cards = document.querySelectorAll('a[href*=\"/projects/\"]');
+          var dedupe = Object.create(null);
+          var items = [];
+
+          for (var i = 0; i < cards.length; i++) {
+            var anchor = cards[i];
+            var href = (anchor.getAttribute && anchor.getAttribute('href')) || '';
+            var url = anchor.href || href || '';
+            var key = url || href;
+            if (!key || dedupe[key]) continue;
+            dedupe[key] = true;
+
+            var card = (anchor.closest && anchor.closest('article, li, div')) || anchor;
+            var title = clean(
+              (anchor.getAttribute && anchor.getAttribute('title'))
+                || firstText(anchor, ['h1', 'h2', 'h3', 'h4'])
+                || anchor.textContent
+            );
+            var rawMatch = url.match(/\\/projects\\/([^/?#]+\\/[^/?#]+)/) || url.match(/\\/projects\\/([^/?#]+)/);
+            var rawId = rawMatch ? clean(rawMatch[1]) : '';
+
+            if (!title && !url) continue;
+            items.push({ title: title || null, url: url || null, raw_id: rawId || null });
+          }
+
+          var clicked = false;
+          var btn = findLoadMoreButton();
+          if (btn) {
+            try { btn.scrollIntoView({ block: 'center' }); } catch {}
+            try {
+              btn.click();
+              clicked = true;
+            } catch (e) {
+              try {
+                var ev = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
+                btn.dispatchEvent(ev);
+                clicked = true;
+              } catch {}
+            }
+          }
+
+          return {
+            authRequired: authRequired,
+            itemCount: items.length,
+            clickedLoadMore: clicked,
+            items: items
+          };
+        })()
+      `)) as {
+        authRequired?: boolean;
+        itemCount?: number;
+        clickedLoadMore?: boolean;
+        items?: Array<Record<string, unknown>>;
+      };
+
+      authRequiredDetected = authRequiredDetected || Boolean(listPayload?.authRequired);
+
+      const rawItems = Array.isArray(listPayload?.items) ? listPayload.items : [];
+      let newCount = 0;
       for (const item of rawItems) {
         const abs = toAbsoluteUrl(item.url);
         if (!abs) continue;
-        if (seen.has(abs)) continue;
-        seen.set(abs, {
+        const key = abs;
+        if (seenUrlKeys.has(key)) continue;
+        seenUrlKeys.add(key);
+        newCount += 1;
+        targetItems.push({
           title: typeof item.title === 'string' ? item.title : null,
           url: abs,
           raw_id: item.raw_id == null ? null : String(item.raw_id),
         });
-        if (seen.size >= limit) break;
+        if (targetItems.length >= limit) break;
       }
-      if (seen.size >= limit) break;
+      seenOnCurrentPage += newCount;
 
-      const before = seen.size;
+      debugRounds.push({
+        ts: nowIsoUtc8(),
+        round,
+        list_page: currentListPageNo,
+        dom_items: Number(listPayload?.itemCount ?? 0),
+        new_items: newCount,
+        total_items: targetItems.length,
+        clickedLoadMore: Boolean(listPayload?.clickedLoadMore),
+      });
+
+      if (newCount === 0) {
+        roundsWithoutNew += 1;
+      } else {
+        roundsWithoutNew = 0;
+      }
+
+      if (targetItems.length >= limit) {
+        listStopReason = 'limit_reached';
+        break;
+      }
+
       try {
-        await page.autoScroll();
-      } catch {}
-      const clicked = payload?.hasLoadMore ? await clickKickstarterLoadMore(page) : false;
-      try {
-        await page.wait(clicked ? 2 : 1);
+        await autoScrollKickstarterList(page, { times: 4, delayMs: 1200 });
       } catch {}
 
-      if (seen.size === before && !clicked && payload?.hasLoadMore !== true) break;
+      if (
+        shouldAdvanceListPage({
+          domItemCount: Number(listPayload?.itemCount ?? 0),
+          newCount,
+          clickedLoadMore: Boolean(listPayload?.clickedLoadMore),
+          seenOnCurrentPage,
+          roundsWithoutNew,
+        })
+      ) {
+        const nextPageNo = currentListPageNo + 1;
+        const nextUrl = withListPageNumber(currentListUrl, nextPageNo);
+        if (nextUrl !== currentListUrl) {
+          currentListUrl = nextUrl;
+          currentListPageNo = nextPageNo;
+          seenOnCurrentPage = 0;
+          debugPagesVisited.push({ ts: nowIsoUtc8(), url: currentListUrl, page: currentListPageNo });
+          try {
+            await page.goto(currentListUrl);
+            await page.wait(2);
+          } catch {}
+          roundsWithoutNew = 0;
+          continue;
+        }
+      }
+
+      if (Date.now() - startedListAt > LIST_COLLECTION_MAX_MS) {
+        listStopReason = 'time_budget_exceeded';
+        break;
+      }
+
+      try {
+        await page.autoScroll({ times: 3, delayMs: 1200 });
+      } catch {}
+      try {
+        await page.wait(2);
+      } catch {}
     }
 
-    const targets = [...seen.values()].slice(0, limit);
-    if (authRequired && targets.length === 0) {
+    if (!listStopReason) {
+      listStopReason =
+        targetItems.length >= limit
+          ? 'limit_reached'
+          : Date.now() - startedListAt > LIST_COLLECTION_MAX_MS
+            ? 'time_budget_exceeded'
+            : 'round_budget_exceeded';
+    }
+
+    if (runRoot) {
+      await safeWriteJson(engine, path.join(runRoot, 'list-collection.json'), {
+        ts: nowIsoUtc8(),
+        listUrl,
+        pagesVisited: debugPagesVisited,
+        limit,
+        authRequiredDetected,
+        total: targetItems.length,
+        stopReason: listStopReason,
+        rounds: debugRounds,
+      });
+    }
+
+    if (authRequiredDetected && targetItems.length === 0) {
       throw new AuthRequiredError(DOMAIN, 'AuthRequired: kickstarter/crawl requires login or passed verification');
     }
-    if (targets.length === 0) {
+    if (targetItems.length === 0) {
       throw new EmptyResultError('kickstarter/crawl', 'No project URLs found on list page');
     }
+    if (targetItems.length < limit) {
+      throw new EmptyResultError(
+        'kickstarter/crawl',
+        `List page yielded only ${targetItems.length}/${limit} unique project URLs (no pagination/scroll match).`,
+      );
+    }
+
+    const targets = targetItems.slice(0, limit);
 
     const cacheFilePath = getRuleCacheFilePath();
     const llm = getLlmConfigFromEnv();
@@ -715,25 +1066,25 @@ cli({
               var h = el.getAttribute('href');
               return clean(h || '') || null;
             }
+            if (tag === 'a') {
+                var ah = (el.getAttribute && el.getAttribute('href')) || (el.href || '');
+                return clean(ah || '') || null;
+            }
             if (tag === 'img') {
-              var src = el.currentSrc || el.getAttribute('src');
-              return clean(src || '') || null;
+              var isrc = (el.currentSrc || '') || (el.getAttribute && el.getAttribute('src')) || '';
+              return clean(isrc || '') || null;
             }
             if (tag === 'video') {
-              var vsrc = el.currentSrc || el.getAttribute('src');
+              var vsrc = (el.currentSrc || '') || (el.getAttribute && el.getAttribute('src')) || '';
               return clean(vsrc || '') || null;
             }
             if (tag === 'source') {
-              var ssrc = el.getAttribute('src');
+              var ssrc = (el.getAttribute && el.getAttribute('src')) || '';
               return clean(ssrc || '') || null;
             }
-            if (tag === 'a') {
-              var ahref = el.getAttribute('href') || el.href;
-              return clean(ahref || '') || null;
-            }
             if (tag === 'iframe') {
-              var ifsrc = el.getAttribute('src');
-              return clean(ifsrc || '') || null;
+              var fsrc = (el.getAttribute && el.getAttribute('src')) || '';
+              return clean(fsrc || '') || null;
             }
             if (tag === 'time') {
               var dt = el.getAttribute('datetime');
@@ -832,6 +1183,30 @@ cli({
         };
       }
 
+      const extractionWarning = buildExtractionWarning({
+        snapshotSummaries: (learningRes as any)?.snapshot_summaries ?? null,
+        values,
+        selectorPlan: selectorPlanForEval,
+        listTitle: t.title ?? null,
+      });
+      if (extractionWarning.flagged) {
+        extra.warning = {
+          value: true,
+          value_type: 'boolean',
+          provenance: { strategy: 'heuristic_warning' },
+        };
+        extra.warning_codes = {
+          value: extractionWarning.codes.join(','),
+          value_type: 'text',
+          provenance: { strategy: 'heuristic_warning' },
+        };
+        extra.warning_message = {
+          value: extractionWarning.message,
+          value_type: 'text',
+          provenance: { strategy: 'heuristic_warning' },
+        };
+      }
+
       const row = {
         site: 'kickstarter',
         page_type: pageType,
@@ -865,6 +1240,9 @@ cli({
           snapshot_summaries: learningRes.snapshot_summaries,
           selector_plan: learningRes.selector_plan,
           schema_first: schemaFirstOut,
+          warning: extractionWarning.flagged
+            ? { codes: extractionWarning.codes, message: extractionWarning.message }
+            : null,
         });
         if (cancelled) return;
         // Template artifact: shared selector-plan for the same dom_fingerprint.
@@ -901,7 +1279,10 @@ cli({
             status: 'succeeded',
             cache_status: learningRes.cache_status,
             input_summary: undefined,
-            output_summary: { duration_ms: Date.now() - startedAt.getTime() },
+            output_summary: {
+              duration_ms: Date.now() - startedAt.getTime(),
+              warning_codes: extractionWarning.flagged ? extractionWarning.codes : [],
+            },
             error: null,
           }),
         );
@@ -951,6 +1332,8 @@ export const __test__ = {
   MAX_LIMIT,
   normalizeLimit,
   resolveSearchUrl,
+  shouldAdvanceListPage,
   toAbsoluteUrl,
   rawIdFromKickstarterUrl,
+  buildExtractionWarning,
 };

@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { cli, Strategy } from '@jackwener/opencli/registry';
 import type { IPage } from '@jackwener/opencli/types';
+import { normalizeExtractedMediaFields } from '../_shared/media.js';
 
 const DOMAIN = 'www.kickstarter.com';
 const BASE_URL = 'https://www.kickstarter.com';
@@ -387,25 +388,25 @@ cli({
               var h = el.getAttribute('href');
               return clean(h || '') || null;
             }
+            if (tag === 'a') {
+              var ah = (el.getAttribute && el.getAttribute('href')) || (el.href || '');
+              return clean(ah || '') || null;
+            }
             if (tag === 'img') {
-              var src = el.currentSrc || el.getAttribute('src');
-              return clean(src || '') || null;
+              var isrc = (el.currentSrc || '') || (el.getAttribute && el.getAttribute('src')) || '';
+              return clean(isrc || '') || null;
             }
             if (tag === 'video') {
-              var vsrc = el.currentSrc || el.getAttribute('src');
+              var vsrc = (el.currentSrc || '') || (el.getAttribute && el.getAttribute('src')) || '';
               return clean(vsrc || '') || null;
             }
             if (tag === 'source') {
-              var ssrc = el.getAttribute('src');
+              var ssrc = (el.getAttribute && el.getAttribute('src')) || '';
               return clean(ssrc || '') || null;
             }
-            if (tag === 'a') {
-              var ahref = el.getAttribute('href') || el.href;
-              return clean(ahref || '') || null;
-            }
             if (tag === 'iframe') {
-              var ifsrc = el.getAttribute('src');
-              return clean(ifsrc || '') || null;
+              var fsrc = (el.getAttribute && el.getAttribute('src')) || '';
+              return clean(fsrc || '') || null;
             }
             if (tag === 'time') {
               var dt = el.getAttribute('datetime');
@@ -490,6 +491,7 @@ cli({
       site: 'kickstarter',
       page_type: pageType,
       ...core,
+      ...normalizeExtractedMediaFields(values, url),
       extra,
     };
 

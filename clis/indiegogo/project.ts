@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { cli, Strategy } from '@jackwener/opencli/registry';
 import type { IPage } from '@jackwener/opencli/types';
+import { normalizeExtractedMediaFields } from '../_shared/media.js';
 
 const DOMAIN = 'www.indiegogo.com';
 const BASE_URL = 'https://www.indiegogo.com';
@@ -480,6 +481,7 @@ cli({
       site: 'indiegogo',
       page_type: pageType,
       ...core,
+      ...normalizeExtractedMediaFields(values, url),
       extra,
     };
 
@@ -513,4 +515,3 @@ cli({
     return row;
   },
 });
-
