@@ -3317,38 +3317,6 @@
     "sourceFile": "hf/top.ts"
   },
   {
-    "site": "huodongxing",
-    "name": "crawl",
-    "description": "Huodongxing list -> event detail crawl (schema-first, cache-first)",
-    "domain": "www.huodongxing.com",
-    "strategy": "cookie",
-    "browser": true,
-    "args": [
-      {
-        "name": "query_or_url",
-        "type": "str",
-        "required": false,
-        "positional": true,
-        "help": "Search keyword or full Huodongxing search URL"
-      },
-      {
-        "name": "limit",
-        "type": "int",
-        "default": 10,
-        "required": false,
-        "help": "Number of events to crawl (max 50)"
-      }
-    ],
-    "columns": [
-      "title",
-      "url",
-      "raw_id"
-    ],
-    "type": "ts",
-    "modulePath": "huodongxing/crawl.js",
-    "sourceFile": "huodongxing/crawl.ts"
-  },
-  {
     "site": "hupu",
     "name": "hot",
     "description": "虎扑热门帖子",
@@ -3390,31 +3358,6 @@
     ],
     "type": "yaml",
     "sourceFile": "hupu/hot.yaml"
-  },
-  {
-    "site": "indiegogo",
-    "name": "project",
-    "description": "Indiegogo project detail (C1: engine learns, opencli executes)",
-    "domain": "www.indiegogo.com",
-    "strategy": "public",
-    "browser": true,
-    "args": [
-      {
-        "name": "url",
-        "type": "str",
-        "required": true,
-        "positional": true,
-        "help": "Indiegogo campaign URL"
-      }
-    ],
-    "columns": [
-      "title",
-      "url",
-      "raw_id"
-    ],
-    "type": "ts",
-    "modulePath": "indiegogo/project.js",
-    "sourceFile": "indiegogo/project.ts"
   },
   {
     "site": "indiegogo",
@@ -4483,31 +4426,6 @@
     ],
     "type": "yaml",
     "sourceFile": "jimeng/history.yaml"
-  },
-  {
-    "site": "kickstarter",
-    "name": "project",
-    "description": "Kickstarter project detail (C1: engine learns, opencli executes)",
-    "domain": "www.kickstarter.com",
-    "strategy": "public",
-    "browser": true,
-    "args": [
-      {
-        "name": "url",
-        "type": "str",
-        "required": true,
-        "positional": true,
-        "help": "Kickstarter project URL"
-      }
-    ],
-    "columns": [
-      "title",
-      "url",
-      "raw_id"
-    ],
-    "type": "ts",
-    "modulePath": "kickstarter/project.js",
-    "sourceFile": "kickstarter/project.ts"
   },
   {
     "site": "kickstarter",
