@@ -162,10 +162,10 @@ function getArtifactsBaseDir(): string | null {
   return dir ? dir : null;
 }
 
-function getLearningModeFromEnv(): 'auto' | 'llm_only' | 'heuristic_only' | undefined {
+function getLearningModeFromEnv(): 'auto' | 'llm_only' | 'heuristic_only' | 'cache_only' | undefined {
   const raw = process.env.OPENCLI_KICKSTARTER_LEARNING_MODE?.trim();
   if (!raw) return undefined;
-  if (raw === 'auto' || raw === 'llm_only' || raw === 'heuristic_only') return raw;
+  if (raw === 'auto' || raw === 'llm_only' || raw === 'heuristic_only' || raw === 'cache_only') return raw;
   return undefined;
 }
 
@@ -882,21 +882,30 @@ cli({
 
               const startedAt = new Date();
               if (cancelled) return;
-              const learningRes = await engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1({
-                schemaRegistryFilePath,
-                selectorCacheFilePath: cacheFilePath,
-                site: 'kickstarter',
-                page_type: pageType,
-                url,
-                url_pattern: urlPattern,
-                schema_version: 'v1',
-                prompt_version: 'page_understanding_v1',
-                ...(schema_hint_prompt !== undefined ? { schema_hint_prompt } : {}),
-                html_snapshots,
-                learning_mode,
-                llm,
-                fetchImpl: fetch,
-              });
+              let learningRes: Awaited<ReturnType<(typeof engine)['getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1']>>;
+              try {
+                learningRes = await engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1({
+                  schemaRegistryFilePath,
+                  selectorCacheFilePath: cacheFilePath,
+                  site: 'kickstarter',
+                  page_type: pageType,
+                  url,
+                  url_pattern: urlPattern,
+                  schema_version: 'v1',
+                  prompt_version: 'page_understanding_v1',
+                  ...(schema_hint_prompt !== undefined ? { schema_hint_prompt } : {}),
+                  html_snapshots,
+                  learning_mode,
+                  llm,
+                  fetchImpl: fetch,
+                });
+              } catch (e) {
+                const code = typeof (e as any)?.code === 'string' ? String((e as any).code) : undefined;
+                if (code === 'schema_cache_miss_requires_learn' || code === 'selector_cache_miss_requires_learn') {
+                  throw new Error('需要先 Learn：缓存缺失（core_schema / selector_plan）。请先执行 Learn，再 Run + Persist。');
+                }
+                throw e;
+              }
               if (cancelled) return;
 
           const anyBlocked =

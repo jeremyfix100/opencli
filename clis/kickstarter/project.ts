@@ -72,10 +72,10 @@ function getArtifactsBaseDir(): string | null {
   return dir ? dir : null;
 }
 
-function getLearningModeFromEnv(): 'auto' | 'llm_only' | 'heuristic_only' | undefined {
+function getLearningModeFromEnv(): 'auto' | 'llm_only' | 'heuristic_only' | 'cache_only' | undefined {
   const raw = process.env.OPENCLI_KICKSTARTER_LEARNING_MODE?.trim();
   if (!raw) return undefined;
-  if (raw === 'auto' || raw === 'llm_only' || raw === 'heuristic_only') return raw;
+  if (raw === 'auto' || raw === 'llm_only' || raw === 'heuristic_only' || raw === 'cache_only') return raw;
   return undefined;
 }
 
@@ -290,16 +290,21 @@ cli({
     } catch (e) {
       if (artifactPaths && runId) {
         const err = e instanceof Error ? e : new Error(String(e));
+        const code = typeof (e as any)?.code === 'string' ? String((e as any).code) : undefined;
         const isSchemaLlmUnavailable =
           typeof (engine as any).SchemaLlmUnavailableError === 'function' &&
           e instanceof (engine as any).SchemaLlmUnavailableError;
         const isCacheRead = e instanceof engine.RuleCacheReadError;
+        const isRequiresLearn =
+          code === 'schema_cache_miss_requires_learn' || code === 'selector_cache_miss_requires_learn';
         const errorType = isSchemaLlmUnavailable
           ? 'schema_llm_unavailable'
+          : isRequiresLearn
+            ? 'requires_learn'
           : isCacheRead
             ? e.type
             : 'unknown';
-        const errorCode = typeof (e as any)?.code === 'string' ? (e as any).code : undefined;
+        const errorCode = code;
 
         await safeAppendTrace(
           engine,
@@ -318,6 +323,10 @@ cli({
             error: { type: errorType, message: err.message, code: errorCode },
           }),
         );
+      }
+      const code = typeof (e as any)?.code === 'string' ? String((e as any).code) : undefined;
+      if (code === 'schema_cache_miss_requires_learn' || code === 'selector_cache_miss_requires_learn') {
+        throw new Error('需要先 Learn：缓存缺失（core_schema / selector_plan）。请先执行 Learn，再 Run + Persist。');
       }
       throw e;
     }
