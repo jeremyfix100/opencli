@@ -94,6 +94,125 @@ afterEach(() => {
 });
 
 describe('huodongxing/crawl', () => {
+  it('events list pagination: collects urls across multiple ?page= pages', async () => {
+    const engine = await import('mkt-learning-engine');
+    vi.mocked(engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1).mockResolvedValue({
+      cache_status: 'hit',
+      learning_method: 'cache_hit',
+      dom_fingerprint: 'fp_test',
+      llm_model: null,
+      selector_plan: {
+        plans: [
+          { field: 'title', selectors: ['h1'], fallback_selectors: [], confidence: 0.9, reason: 't' },
+          { field: 'raw_id', selectors: ['meta[property="og:url"]'], fallback_selectors: [], confidence: 0.8, reason: 'id' },
+        ],
+      },
+      used_snapshot_key: 's1',
+      snapshot_summaries: {
+        s0: { ts: '2026-04-11T00:00:00.000Z', byte_len: 1, text_len: 1, blocked: false },
+        s1: { ts: '2026-04-11T00:00:01.000Z', byte_len: 1, text_len: 1, blocked: false },
+        s2: { ts: '2026-04-11T00:00:02.000Z', byte_len: 1, text_len: 1, blocked: false },
+      },
+      core_schema: [],
+      core_schema_sig: 'sig_test',
+    } as any);
+
+    const listUrl =
+      'https://www.huodongxing.com/events?orderby=n&d=t5&city=%E6%B7%B1%E5%9C%B3&page=1';
+
+    const page = createPage([
+      // list page=1 payload
+      {
+        authRequired: false,
+        itemCount: 1,
+        items: [{ title: 'E1', url: '/event/1' }],
+      },
+      // list page=2 payload
+      {
+        authRequired: false,
+        itemCount: 1,
+        items: [{ title: 'E2', url: '/event/2' }],
+      },
+      // detail 1 snapshots + exec
+      '<html><body>s0-1</body></html>',
+      '<html><body>s1-1</body></html>',
+      '<html><body>s2-1</body></html>',
+      { values: { title: 'E1', raw_id: '1' }, provenance: {} },
+      // detail 2 snapshots + exec
+      '<html><body>s0-2</body></html>',
+      '<html><body>s1-2</body></html>',
+      '<html><body>s2-2</body></html>',
+      { values: { title: 'E2', raw_id: '2' }, provenance: {} },
+    ]);
+
+    const rows = (await cmd.func!(page, { query_or_url: listUrl, limit: 2 })) as Array<Record<string, unknown>>;
+    expect(rows).toHaveLength(2);
+
+    expect(vi.mocked(page.goto).mock.calls[0]?.[0]).toMatch('page=1');
+    expect(vi.mocked(page.goto).mock.calls[1]?.[0]).toMatch('page=2');
+    expect(rows[0]).toMatchObject({ site: 'huodongxing', page_type: 'event_detail', title: 'E1', raw_id: '1' });
+    expect(rows[1]).toMatchObject({ site: 'huodongxing', page_type: 'event_detail', title: 'E2', raw_id: '2' });
+  });
+
+  it('search list pagination: collects urls across multiple ?pi= pages', async () => {
+    const engine = await import('mkt-learning-engine');
+    vi.mocked(engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1).mockResolvedValue({
+      cache_status: 'hit',
+      learning_method: 'cache_hit',
+      dom_fingerprint: 'fp_test',
+      llm_model: null,
+      selector_plan: {
+        plans: [
+          { field: 'title', selectors: ['h1'], fallback_selectors: [], confidence: 0.9, reason: 't' },
+          { field: 'raw_id', selectors: ['meta[property="og:url"]'], fallback_selectors: [], confidence: 0.8, reason: 'id' },
+        ],
+      },
+      used_snapshot_key: 's1',
+      snapshot_summaries: {
+        s0: { ts: '2026-04-11T00:00:00.000Z', byte_len: 1, text_len: 1, blocked: false },
+        s1: { ts: '2026-04-11T00:00:01.000Z', byte_len: 1, text_len: 1, blocked: false },
+        s2: { ts: '2026-04-11T00:00:02.000Z', byte_len: 1, text_len: 1, blocked: false },
+      },
+      core_schema: [],
+      core_schema_sig: 'sig_test',
+    } as any);
+
+    const listUrl = 'https://www.huodongxing.com/search?ps=12&pi=3&list=list&qs=AI';
+
+    const page = createPage([
+      // list pi=3 payload
+      {
+        authRequired: false,
+        itemCount: 1,
+        items: [{ title: 'E3', url: '/event/3' }],
+      },
+      // list pi=4 payload
+      {
+        authRequired: false,
+        itemCount: 1,
+        items: [{ title: 'E4', url: '/event/4' }],
+      },
+      // detail 3 snapshots + exec
+      '<html><body>s0-3</body></html>',
+      '<html><body>s1-3</body></html>',
+      '<html><body>s2-3</body></html>',
+      { values: { title: 'E3', raw_id: '3' }, provenance: {} },
+      // detail 4 snapshots + exec
+      '<html><body>s0-4</body></html>',
+      '<html><body>s1-4</body></html>',
+      '<html><body>s2-4</body></html>',
+      { values: { title: 'E4', raw_id: '4' }, provenance: {} },
+    ]);
+
+    const rows = (await cmd.func!(page, { query_or_url: listUrl, limit: 2 })) as Array<Record<string, unknown>>;
+    expect(rows).toHaveLength(2);
+
+    expect(vi.mocked(page.goto).mock.calls[0]?.[0]).toMatch('pi=3');
+    expect(vi.mocked(page.goto).mock.calls[1]?.[0]).toMatch('pi=4');
+    expect(rows[0]).toMatchObject({ site: 'huodongxing', page_type: 'event_detail', title: 'E3', raw_id: '3' });
+    expect(rows[1]).toMatchObject({ site: 'huodongxing', page_type: 'event_detail', title: 'E4', raw_id: '4' });
+  });
+
   it('list -> detail: crawls 2 urls and returns 2 rows', async () => {
     const engine = await import('mkt-learning-engine');
     vi.mocked(engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1).mockResolvedValue({

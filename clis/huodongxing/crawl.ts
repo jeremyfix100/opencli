@@ -8,8 +8,10 @@ import { normalizeExtractedMediaFields } from '../_shared/media.js';
 
 const DOMAIN = 'www.huodongxing.com';
 const BASE_URL = 'https://www.huodongxing.com';
-const DEFAULT_SEARCH_URL = BASE_URL + '/search?wd=AI';
+const DEFAULT_SEARCH_URL = BASE_URL + '/search?ps=12&pi=1&list=list&qs=AI';
 const MAX_LIMIT = 50;
+const LIST_COLLECTION_MAX_PAGES = 120;
+const LIST_COLLECTION_MAX_MS = 45_000;
 
 function pad2(n: number): string {
   return String(n).padStart(2, '0');
@@ -42,7 +44,53 @@ function resolveSearchUrl(input: unknown): string {
   const raw = String(input ?? '').trim();
   if (!raw) return DEFAULT_SEARCH_URL;
   if (/^https?:\/\//i.test(raw)) return raw;
-  return BASE_URL + '/search?wd=' + encodeURIComponent(raw);
+  return BASE_URL + '/search?ps=12&pi=1&list=list&qs=' + encodeURIComponent(raw);
+}
+
+function isEventsListUrl(inputUrl: string): boolean {
+  try {
+    const u = new URL(inputUrl);
+    return u.hostname === DOMAIN && /\/events\b/i.test(u.pathname);
+  } catch {
+    return false;
+  }
+}
+
+function isSearchListUrl(inputUrl: string): boolean {
+  try {
+    const u = new URL(inputUrl);
+    return u.hostname === DOMAIN && /\/search\b/i.test(u.pathname);
+  } catch {
+    return false;
+  }
+}
+
+function getPagingParamName(inputUrl: string): 'page' | 'pi' | null {
+  if (isEventsListUrl(inputUrl)) return 'page';
+  if (isSearchListUrl(inputUrl)) return 'pi';
+  return null;
+}
+
+function getPageNumberFromUrl(inputUrl: string, paramName: string): number {
+  try {
+    const u = new URL(inputUrl);
+    const raw = u.searchParams.get(paramName);
+    const n = raw ? Number(raw) : NaN;
+    if (!Number.isFinite(n)) return 1;
+    return Math.max(1, Math.floor(n));
+  } catch {
+    return 1;
+  }
+}
+
+function withListPageNumber(inputUrl: string, paramName: string, pageNo: number): string {
+  try {
+    const u = new URL(inputUrl);
+    u.searchParams.set(paramName, String(Math.max(1, Math.floor(pageNo))));
+    return u.toString();
+  } catch {
+    return inputUrl;
+  }
 }
 
 function toAbsoluteUrl(value: unknown): string | null {
@@ -142,6 +190,54 @@ type ExecPayload = {
   provenance?: Record<string, unknown>;
 };
 
+type HuodongxingListEvalPayload = {
+  authRequired?: boolean;
+  items?: Array<Record<string, unknown>>;
+  itemCount?: number;
+};
+
+async function evalHuodongxingList(page: IPage, opts: { limit: number }): Promise<HuodongxingListEvalPayload> {
+  return (await page.evaluate(`
+    (function () {
+      function clean(v) { return String(v || '').replace(/\\s+/g, ' ').trim(); }
+      function firstText(root, selectors) {
+        for (var i = 0; i < selectors.length; i++) {
+          var el = root && root.querySelector ? root.querySelector(selectors[i]) : null;
+          if (el && el.textContent) return clean(el.textContent);
+        }
+        return '';
+      }
+
+      var body = document.body;
+      var bodyText = clean(body && body.innerText ? body.innerText : '');
+      var authRequired = /log in|sign in|please sign in|please log in|captcha|verify|verification|risk|风控|登录|验证/i.test(bodyText);
+
+      var anchors = document.querySelectorAll('a[href*=\"/event/\"]');
+      var dedupe = Object.create(null);
+      var items = [];
+
+      for (var i = 0; i < anchors.length; i++) {
+        var a = anchors[i];
+        var href = (a.getAttribute && a.getAttribute('href')) || '';
+        var url = a.href || href || '';
+        var key = url || href;
+        if (!key || dedupe[key]) continue;
+        dedupe[key] = true;
+        var title = clean(
+          (a.getAttribute && a.getAttribute('title'))
+            || firstText(a, ['h1', 'h2', 'h3', 'h4'])
+            || a.textContent
+        );
+        if (!title && !url) continue;
+        items.push({ title: title || null, url: url || null });
+        if (items.length >= ${opts.limit}) break;
+      }
+
+      return { authRequired: authRequired, itemCount: anchors.length, items: items };
+    })()
+  `)) as HuodongxingListEvalPayload;
+}
+
 async function safeWriteJson(
   engine: typeof import('mkt-learning-engine'),
   filePath: string,
@@ -200,61 +296,60 @@ cli({
     const limit = normalizeLimit(kwargs.limit);
     const listUrl = resolveSearchUrl(kwargs.query_or_url);
 
-    await page.goto(listUrl);
-    try {
-      await page.wait(1);
-    } catch {
-      // Best effort only
+    const seenUrlKeys = new Set<string>();
+    const targets: Array<{ title: string | null; url: string }> = [];
+    let authRequiredDetected = false;
+
+    const pagingParamName = getPagingParamName(listUrl);
+    const enablePagination = pagingParamName != null;
+    const startedListAt = Date.now();
+    const startPageNo = enablePagination ? getPageNumberFromUrl(listUrl, pagingParamName!) : 1;
+    const maxPages = enablePagination ? Math.min(LIST_COLLECTION_MAX_PAGES, Math.max(3, limit * 10)) : 1;
+
+    let pagesWithoutNew = 0;
+    for (let i = 0; i < maxPages; i++) {
+      const pageNo = startPageNo + i;
+      const currentListUrl = enablePagination ? withListPageNumber(listUrl, pagingParamName!, pageNo) : listUrl;
+
+      await page.goto(currentListUrl);
+      try {
+        await page.wait(1);
+      } catch {
+        // Best effort only
+      }
+      try {
+        await page.autoScroll({ times: 2, delayMs: 900 });
+      } catch {}
+      try {
+        await page.wait(1);
+      } catch {}
+
+      const listPayload = await evalHuodongxingList(page, { limit });
+      authRequiredDetected = authRequiredDetected || Boolean(listPayload?.authRequired);
+
+      const rawItems = Array.isArray(listPayload?.items) ? listPayload.items : [];
+      let newCount = 0;
+      for (const item of rawItems) {
+        const abs = toAbsoluteUrl((item as any)?.url);
+        if (!abs) continue;
+        if (seenUrlKeys.has(abs)) continue;
+        seenUrlKeys.add(abs);
+        newCount += 1;
+        targets.push({ title: typeof (item as any)?.title === 'string' ? (item as any).title : null, url: abs });
+        if (targets.length >= limit) break;
+      }
+
+      if (targets.length >= limit) break;
+
+      if (newCount === 0) pagesWithoutNew += 1;
+      else pagesWithoutNew = 0;
+
+      if (!enablePagination) break;
+      if (pagesWithoutNew >= 2) break;
+      if (Date.now() - startedListAt > LIST_COLLECTION_MAX_MS) break;
     }
 
-    const listPayload = (await page.evaluate(`
-      (function () {
-        function clean(v) { return String(v || '').replace(/\\s+/g, ' ').trim(); }
-        function firstText(root, selectors) {
-          for (var i = 0; i < selectors.length; i++) {
-            var el = root && root.querySelector ? root.querySelector(selectors[i]) : null;
-            if (el && el.textContent) return clean(el.textContent);
-          }
-          return '';
-        }
-
-        var body = document.body;
-        var bodyText = clean(body && body.innerText ? body.innerText : '');
-        var authRequired = /log in|sign in|please sign in|please log in|captcha|verify|verification|risk|风控|登录|验证/i.test(bodyText);
-
-        var anchors = document.querySelectorAll('a[href*=\"/event/\"]');
-        var dedupe = Object.create(null);
-        var items = [];
-
-        for (var i = 0; i < anchors.length; i++) {
-          var a = anchors[i];
-          var href = (a.getAttribute && a.getAttribute('href')) || '';
-          var url = a.href || href || '';
-          var key = url || href;
-          if (!key || dedupe[key]) continue;
-          dedupe[key] = true;
-          var card = (a.closest && a.closest('article, li, div')) || a;
-          var title = clean(
-            (a.getAttribute && a.getAttribute('title'))
-              || firstText(a, ['h1', 'h2', 'h3', 'h4'])
-              || a.textContent
-          );
-          items.push({ title: title || null, url: url || null });
-          if (items.length >= ${limit}) break;
-        }
-        return { authRequired: authRequired, items: items };
-      })()
-    `)) as { authRequired?: boolean; items?: Array<Record<string, unknown>> };
-
-    const rawItems = Array.isArray(listPayload?.items) ? listPayload.items : [];
-    const targets = rawItems
-      .map((item) => ({
-        title: typeof item.title === 'string' ? item.title : null,
-        url: toAbsoluteUrl(item.url),
-      }))
-      .filter((x) => Boolean(x.url));
-
-    if (listPayload?.authRequired && targets.length === 0) {
+    if (authRequiredDetected && targets.length === 0) {
       throw new AuthRequiredError(DOMAIN, 'AuthRequired: huodongxing/crawl requires login or passed verification');
     }
     if (targets.length === 0) {
@@ -605,8 +700,15 @@ cli({
 
 export const __test__ = {
   MAX_LIMIT,
+  LIST_COLLECTION_MAX_PAGES,
+  LIST_COLLECTION_MAX_MS,
   normalizeLimit,
   resolveSearchUrl,
+  isEventsListUrl,
+  isSearchListUrl,
+  getPagingParamName,
+  getPageNumberFromUrl,
+  withListPageNumber,
   toAbsoluteUrl,
   rawIdFromHuodongxingUrl,
 };
