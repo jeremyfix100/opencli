@@ -169,6 +169,13 @@ function getLearningModeFromEnv(): 'auto' | 'llm_only' | 'heuristic_only' | 'cac
   return undefined;
 }
 
+function shouldSaveHtmlSnapshots(learningMode: ReturnType<typeof getLearningModeFromEnv>): boolean {
+  const override = process.env.OPENCLI_SAVE_HTML_SNAPSHOTS?.trim();
+  if (override === '1') return true;
+  if (override === '0') return false;
+  return learningMode !== 'cache_only';
+}
+
 function getKickstarterSchemaRegistryPath(): string {
   const overridden = process.env.OPENCLI_KICKSTARTER_SCHEMA_REGISTRY_PATH?.trim();
   if (overridden) return overridden;
@@ -840,18 +847,21 @@ cli({
                 s2: { ts: html_snapshots.s2.ts, byte_len: html_snapshots.s2.html.length },
               } as const;
 
-              if (artifactPaths) {
-                const snapshotsDir = path.join(artifactPaths.root, 'snapshots');
-                await safeWriteText(path.join(snapshotsDir, 's0.html'), html_snapshots.s0.html);
-                if (cancelled) return;
-                await safeWriteText(path.join(snapshotsDir, 's1.html'), html_snapshots.s1.html);
-                if (cancelled) return;
-                await safeWriteText(path.join(snapshotsDir, 's2.html'), html_snapshots.s2.html);
-                if (cancelled) return;
-                await safeWriteJson(engine, artifactPaths.rawPage, {
-                  site: 'kickstarter',
-                  page_type: pageType,
-                  url,
+	              const saveHtmlSnapshots = Boolean(artifactPaths) && shouldSaveHtmlSnapshots(learning_mode);
+	              if (artifactPaths && saveHtmlSnapshots) {
+	                const snapshotsDir = path.join(artifactPaths.root, 'snapshots');
+	                await safeWriteText(path.join(snapshotsDir, 's0.html'), html_snapshots.s0.html);
+	                if (cancelled) return;
+	                await safeWriteText(path.join(snapshotsDir, 's1.html'), html_snapshots.s1.html);
+	                if (cancelled) return;
+	                await safeWriteText(path.join(snapshotsDir, 's2.html'), html_snapshots.s2.html);
+	                if (cancelled) return;
+	              }
+	              if (artifactPaths) {
+	                await safeWriteJson(engine, artifactPaths.rawPage, {
+	                  site: 'kickstarter',
+	                  page_type: pageType,
+	                  url,
                   url_pattern: urlPattern,
                   html_snapshots_summary: htmlSnapshotsSummary,
                 });
@@ -870,13 +880,13 @@ cli({
                     enabled: true,
                     schema_registry_file_path: schemaRegistryFilePath,
                     schema_hint_prompt: schema_hint_prompt ?? null,
-                  },
-                  html_snapshots_summary: htmlSnapshotsSummary,
-                  snapshots_saved: true,
-                  scheduling: sched,
-                  scheduling_seed: sched.randomSeed,
-                  scheduling_attempt: attempt,
-                });
+	                  },
+	                  html_snapshots_summary: htmlSnapshotsSummary,
+	                  snapshots_saved: saveHtmlSnapshots,
+	                  scheduling: sched,
+	                  scheduling_seed: sched.randomSeed,
+	                  scheduling_attempt: attempt,
+	                });
                 if (cancelled) return;
               }
 

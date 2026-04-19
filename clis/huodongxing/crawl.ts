@@ -164,6 +164,13 @@ function getLearningModeFromEnv(): 'auto' | 'llm_only' | 'heuristic_only' | 'cac
   return undefined;
 }
 
+function shouldSaveHtmlSnapshots(learningMode: ReturnType<typeof getLearningModeFromEnv>): boolean {
+  const override = process.env.OPENCLI_SAVE_HTML_SNAPSHOTS?.trim();
+  if (override === '1') return true;
+  if (override === '0') return false;
+  return learningMode !== 'cache_only';
+}
+
 function getHuodongxingSchemaRegistryPath(): string {
   const overridden = process.env.OPENCLI_HUODONGXING_SCHEMA_REGISTRY_PATH?.trim();
   if (overridden) return overridden;
@@ -408,14 +415,17 @@ cli({
             })
           : null;
 
-      if (artifactPaths) {
-        const snapshotsDir = path.join(artifactPaths.root, 'snapshots');
-        await safeWriteText(path.join(snapshotsDir, 's0.html'), html_snapshots.s0.html);
-        await safeWriteText(path.join(snapshotsDir, 's1.html'), html_snapshots.s1.html);
-        await safeWriteText(path.join(snapshotsDir, 's2.html'), html_snapshots.s2.html);
-        await safeWriteJson(engine, artifactPaths.rawPage, {
-          site: 'huodongxing',
-          page_type: pageType,
+	      const saveHtmlSnapshots = Boolean(artifactPaths) && shouldSaveHtmlSnapshots(learning_mode);
+	      if (artifactPaths && saveHtmlSnapshots) {
+	        const snapshotsDir = path.join(artifactPaths.root, 'snapshots');
+	        await safeWriteText(path.join(snapshotsDir, 's0.html'), html_snapshots.s0.html);
+	        await safeWriteText(path.join(snapshotsDir, 's1.html'), html_snapshots.s1.html);
+	        await safeWriteText(path.join(snapshotsDir, 's2.html'), html_snapshots.s2.html);
+	      }
+	      if (artifactPaths) {
+	        await safeWriteJson(engine, artifactPaths.rawPage, {
+	          site: 'huodongxing',
+	          page_type: pageType,
           url,
           url_pattern: urlPattern,
           html_snapshots_summary: htmlSnapshotsSummary,
@@ -434,11 +444,11 @@ cli({
             enabled: true,
             schema_registry_file_path: schemaRegistryFilePath,
             schema_hint_prompt: schema_hint_prompt ?? null,
-          },
-          html_snapshots_summary: htmlSnapshotsSummary,
-          snapshots_saved: true,
-        });
-      }
+	          },
+	          html_snapshots_summary: htmlSnapshotsSummary,
+	          snapshots_saved: saveHtmlSnapshots,
+	        });
+	      }
 
       const startedAt = new Date();
       let learningRes: Awaited<ReturnType<(typeof engine)['getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1']>>;

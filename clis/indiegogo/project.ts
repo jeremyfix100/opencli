@@ -78,6 +78,13 @@ function getLearningModeFromEnv(): 'auto' | 'llm_only' | 'heuristic_only' | 'cac
   return undefined;
 }
 
+function shouldSaveHtmlSnapshots(learningMode: ReturnType<typeof getLearningModeFromEnv>): boolean {
+  const override = process.env.OPENCLI_SAVE_HTML_SNAPSHOTS?.trim();
+  if (override === '1') return true;
+  if (override === '0') return false;
+  return learningMode !== 'cache_only';
+}
+
 function getIndiegogoSchemaRegistryPath(): string {
   const overridden = process.env.OPENCLI_INDIEGOGO_SCHEMA_REGISTRY_PATH?.trim();
   if (overridden) return overridden;
@@ -227,11 +234,16 @@ cli({
           })
         : null;
 
-    if (artifactPaths) {
+    const learning_mode = getLearningModeFromEnv();
+    const saveHtmlSnapshots = shouldSaveHtmlSnapshots(learning_mode);
+
+    if (artifactPaths && saveHtmlSnapshots) {
       const snapshotsDir = path.join(artifactPaths.root, 'snapshots');
       await safeWriteText(path.join(snapshotsDir, 's0.html'), html_snapshots.s0.html);
       await safeWriteText(path.join(snapshotsDir, 's1.html'), html_snapshots.s1.html);
       await safeWriteText(path.join(snapshotsDir, 's2.html'), html_snapshots.s2.html);
+    }
+    if (artifactPaths) {
       await safeWriteJson(engine, artifactPaths.rawPage, {
         site: 'indiegogo',
         page_type: pageType,
@@ -242,7 +254,6 @@ cli({
 
     const cacheFilePath = getRuleCacheFilePath();
     const llm = getLlmConfigFromEnv();
-    const learning_mode = getLearningModeFromEnv();
     const schemaRegistryFilePath = getIndiegogoSchemaRegistryPath();
     const schema_hint_prompt = getSchemaHintPromptFromEnv();
 
@@ -263,7 +274,7 @@ cli({
           schema_hint_prompt: schema_hint_prompt ?? null,
         },
         html_snapshots_summary: htmlSnapshotsSummary,
-        snapshots_saved: true,
+        snapshots_saved: saveHtmlSnapshots,
       });
     }
 
