@@ -171,6 +171,23 @@ function shouldSaveHtmlSnapshots(learningMode: ReturnType<typeof getLearningMode
   return learningMode !== 'cache_only';
 }
 
+function detectTooFrequentVerifyPage(html: string): { ip: string | null; at: string | null } | null {
+  const raw = String(html ?? '');
+  if (!raw) return null;
+  if (!raw.includes('操作过于频繁') && !raw.includes('滑动方块') && !raw.toLowerCase().includes('client ip address')) return null;
+  const m = raw.match(/Client IP address:\s*([0-9.]+)\s*\\(([^)]+)\\)/i);
+  return { ip: m?.[1] ?? null, at: m?.[2] ?? null };
+}
+
+function isLikelyEmptyHtml(html: string): boolean {
+  return String(html ?? '').trim().length < 200;
+}
+
+function waitSecondsWithJitter(baseSeconds: number, jitterSeconds: number): number {
+  const jitter = Math.random() * Math.max(0, jitterSeconds);
+  return Math.max(0, baseSeconds + jitter);
+}
+
 function getHuodongxingSchemaRegistryPath(): string {
   const overridden = process.env.OPENCLI_HUODONGXING_SCHEMA_REGISTRY_PATH?.trim();
   if (overridden) return overridden;
@@ -373,12 +390,38 @@ cli({
     const urlPattern = '/event/:id';
 
     const rows: Array<Record<string, unknown>> = [];
+    let stoppedByVerification: { url: string; ip: string | null; at: string | null } | null = null;
     for (let i = 0; i < targets.length; i++) {
       const t = targets[i]!;
       const url = t.url!;
 
+      if (i > 0) {
+        // Gentle pacing to reduce rate-limit triggers.
+        await page.wait(waitSecondsWithJitter(1.2, 1.8));
+        if ((i + 1) % 10 === 0) {
+          await page.wait(waitSecondsWithJitter(4, 4));
+        }
+      }
+
       await page.goto(url);
-      const s0html = await page.evaluate('document.documentElement.outerHTML');
+      try {
+        await page.wait(1);
+      } catch {}
+      let s0html = await page.evaluate('document.documentElement.outerHTML');
+      if (isLikelyEmptyHtml(s0html)) {
+        // Best-effort retry for slow/blank loads.
+        try {
+          await page.wait(2);
+        } catch {}
+        s0html = await page.evaluate('document.documentElement.outerHTML');
+      }
+
+      const verify = detectTooFrequentVerifyPage(s0html);
+      if (verify) {
+        stoppedByVerification = { url, ip: verify.ip, at: verify.at };
+        break;
+      }
+
       try {
         await page.wait(1);
       } catch {}
@@ -711,6 +754,13 @@ cli({
           }),
         );
       }
+    }
+
+    if (stoppedByVerification) {
+      const { url, ip, at } = stoppedByVerification;
+      console.error(
+        `[huodongxing/crawl] stopped early: verification required (too frequent). ip=${ip ?? 'n/a'} at=${at ?? 'n/a'} url=${url}`,
+      );
     }
 
     return rows;

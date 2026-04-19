@@ -94,6 +94,41 @@ afterEach(() => {
 });
 
 describe('huodongxing/crawl', () => {
+  it('stops early when verification (too frequent) page is encountered', async () => {
+    const engine = await import('mkt-learning-engine');
+    vi.mocked(engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1).mockResolvedValue({
+      cache_status: 'hit',
+      learning_method: 'cache_hit',
+      dom_fingerprint: 'fp_test',
+      llm_model: null,
+      selector_plan: { plans: [] },
+      used_snapshot_key: 's0',
+      snapshot_summaries: {},
+      core_schema: [],
+      core_schema_sig: 'sig_test',
+    } as any);
+
+    const listUrl = 'https://www.huodongxing.com/events?orderby=n&d=t5&city=%E6%B7%B1%E5%9C%B3&page=1';
+
+    const page = createPage([
+      // list payload
+      { authRequired: false, itemCount: 2, items: [{ title: 'E1', url: '/event/1' }, { title: 'E2', url: '/event/2' }] },
+      // detail 1 snapshots + exec
+      '<html><body>s0-1</body></html>',
+      '<html><body>s1-1</body></html>',
+      '<html><body>s2-1</body></html>',
+      { values: { title: 'E1', raw_id: '1' }, provenance: {} },
+      // detail 2 s0 verification page (should stop before executing)
+      '<html><head><title>操作过于频繁</title></head><body><p class=\"ipUrl\">Client IP address: 1.2.3.4 (2026-4-19 18:08:00)</p><p>请滑动方块确认您是真人</p></body></html>',
+    ]);
+
+    const rows = (await cmd.func!(page, { query_or_url: listUrl, limit: 10 })) as Array<Record<string, unknown>>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ site: 'huodongxing', page_type: 'event_detail', title: 'E1', raw_id: '1' });
+
+    expect(vi.mocked(page.goto).mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
   it('events list pagination: collects urls across multiple ?page= pages', async () => {
     const engine = await import('mkt-learning-engine');
     vi.mocked(engine.getOrLearnSelectorPlanSchemaFirstFromHtmlSnapshotsV1).mockResolvedValue({
