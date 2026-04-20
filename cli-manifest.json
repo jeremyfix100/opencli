@@ -2669,6 +2669,32 @@
     "sourceFile": "facebook/search.yaml"
   },
   {
+    "site": "generic",
+    "name": "list",
+    "description": "Generic list/search page collector (cache-only list plan + scroll action plan).",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "url",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Any http(s) URL"
+      }
+    ],
+    "columns": [
+      "url",
+      "site",
+      "page_type",
+      "items_count"
+    ],
+    "type": "ts",
+    "modulePath": "generic/list.js",
+    "sourceFile": "generic/list.ts",
+    "navigateBefore": false
+  },
+  {
     "site": "google",
     "name": "search",
     "description": "Search Google",
