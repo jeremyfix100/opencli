@@ -390,132 +390,182 @@ cli({
 
     const actionPlan = { ...listRes.action_plan, ...(maxItemsOverride ? { max_items: maxItemsOverride } : null) };
     const item_selector = listRes.list_selector_plan.item_selector;
+    const listPlanEffective = (() => {
+      const plan = listRes.list_selector_plan;
+      const fields = Array.isArray(plan.fields) ? plan.fields : [];
+      const nextFields = fields.map((f) => {
+        if (!f || typeof f !== 'object') return f as any;
+        if (f.field !== 'published_at') return f as any;
+        const sels = Array.isArray((f as any).selectors) ? ((f as any).selectors as string[]) : [];
+        const extra = [
+          '.name-time-wrapper .time',
+          '.author .time',
+          '.author-wrapper .time',
+          'a.author .time',
+          'div.time',
+          'span.time',
+          '.time',
+        ];
+        const merged = Array.from(new Set([...sels, ...extra].map((s) => String(s || '').trim()).filter(Boolean)));
+        return { ...(f as any), selectors: merged };
+      });
+      return { ...plan, fields: nextFields };
+    })();
 
     // Execute scroll plan to expose more items.
     let settle = 0;
     let lastCount = -1;
-    const maxRounds = Math.max(0, Math.floor(actionPlan.max_scroll_rounds));
     const settleRounds = Math.max(0, Math.floor(actionPlan.settle_rounds));
     const maxItems = actionPlan.max_items ? Math.max(1, Math.floor(actionPlan.max_items)) : null;
+    const waitAfterScrollSecondsEffective =
+      typeof actionPlan.wait_after_scroll_seconds === 'number' && Number.isFinite(actionPlan.wait_after_scroll_seconds)
+        ? Math.max(0, actionPlan.wait_after_scroll_seconds)
+        : waitAfterScrollSeconds;
 
-    const countItems = async (): Promise<number> => {
-      const n = (await page.evaluate(`
-        (function () {
-          try { return document.querySelectorAll(${JSON.stringify(item_selector)}).length; } catch (e) { return 0; }
-        })()
-      `)) as unknown;
-      return typeof n === 'number' && Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+    const maxRoundsFromPlan = Math.max(0, Math.floor(actionPlan.max_scroll_rounds));
+    const maxRoundsFromLimit =
+      maxItems && maxItems > 0 ? Math.min(200, Math.ceil(maxItems / 20) + 5) : 0; // 20 items/round heuristic
+    const maxRounds = Math.max(maxRoundsFromPlan, maxRoundsFromLimit);
+
+    const scrollOnce = async (): Promise<void> => {
+      // Prefer scrolling the scrollable ancestor of the item list, otherwise fall back to document scroll.
+      try {
+        await page.evaluate(`
+          (function () {
+            try {
+              var itemSel = ${JSON.stringify(item_selector)};
+              var items = Array.from(document.querySelectorAll(itemSel));
+              var last = items.length ? items[items.length - 1] : null;
+              if (last && last.scrollIntoView) {
+                try { last.scrollIntoView({ block: 'end', inline: 'nearest' }); } catch (e) { try { last.scrollIntoView(); } catch (e2) {} }
+              }
+
+              function isScrollable(el) {
+                if (!el) return false;
+                var style = window.getComputedStyle(el);
+                var oy = (style && style.overflowY) ? String(style.overflowY) : '';
+                if (oy !== 'auto' && oy !== 'scroll') return false;
+                return (el.scrollHeight || 0) > (el.clientHeight || 0) + 40;
+              }
+
+              var probe = items.length ? items[0] : document.querySelector(itemSel);
+              var el = probe ? probe.parentElement : null;
+              while (el) {
+                if (isScrollable(el)) break;
+                el = el.parentElement;
+              }
+
+              if (el && isScrollable(el)) {
+                try { el.scrollTop = el.scrollHeight; } catch (e3) {}
+                return;
+              }
+
+              var root = document.scrollingElement || document.documentElement;
+              try { root.scrollTop = root.scrollHeight; } catch (e4) {}
+              try { window.scrollTo(0, document.body.scrollHeight); } catch (e5) {}
+            } catch (e) {}
+          })()
+        `);
+      } catch {}
+      try {
+        await page.scroll('down', 1200);
+      } catch {}
     };
 
-    for (let i = 0; i < maxRounds; i++) {
-      const n0 = await countItems();
-      if (maxItems && n0 >= maxItems) break;
-
-      try {
-        await page.evaluate('window.scrollTo(0, document.body.scrollHeight)');
-      } catch {}
-      try {
-        await page.wait(actionPlan.wait_after_scroll_seconds);
-      } catch {}
-
-      const n1 = await countItems();
-      if (n1 <= lastCount) {
-        settle += 1;
-      } else {
-        settle = 0;
-        lastCount = n1;
-      }
-      if (settleRounds > 0 && settle >= settleRounds) break;
-    }
-
-    // Extract items.
-    const extracted = (await page.evaluate(`
-      (function () {
-        function clean(v) { return String(v || '').replace(/\\s+/g, ' ').trim(); }
-        function firstWithin(root, selector, attr) {
-          try {
-            if (!root || !selector) return null;
-            var node = root.querySelector(selector);
-            if (!node) return null;
-            var tag = node.tagName ? node.tagName.toLowerCase() : '';
-            if (attr === 'href') {
-              if (tag === 'a' && node.href) return clean(node.href) || null;
-              var href = node.getAttribute && node.getAttribute('href');
-              return clean(href || '') || null;
-            }
-            if (attr === 'src') {
-              if (tag === 'img') {
-                var src = (node.currentSrc || '') || (node.getAttribute && node.getAttribute('src')) || '';
-                return clean(src) || null;
+    const extractVisibleRaw = async (): Promise<any[]> => {
+      const extracted = (await page.evaluate(`
+        (function () {
+          function clean(v) { return String(v || '').replace(/\\s+/g, ' ').trim(); }
+          function firstWithin(root, selector, attr) {
+            try {
+              if (!root || !selector) return null;
+              var node = root.querySelector(selector);
+              if (!node) return null;
+              var tag = node.tagName ? node.tagName.toLowerCase() : '';
+              if (attr === 'href') {
+                if (tag === 'a' && node.href) return clean(node.href) || null;
+                var href = node.getAttribute && node.getAttribute('href');
+                return clean(href || '') || null;
               }
-              var src2 = node.getAttribute && node.getAttribute('src');
-              return clean(src2 || '') || null;
+              if (attr === 'src') {
+                if (tag === 'img') {
+                  var src = (node.currentSrc || '') || (node.getAttribute && node.getAttribute('src')) || '';
+                  return clean(src) || null;
+                }
+                var src2 = node.getAttribute && node.getAttribute('src');
+                return clean(src2 || '') || null;
+              }
+              if (attr === 'datetime') {
+                var dt = node.getAttribute && node.getAttribute('datetime');
+                return clean(dt || '') || null;
+              }
+              if (attr === 'content') {
+                var c = node.getAttribute && node.getAttribute('content');
+                return clean(c || '') || null;
+              }
+              // default: text
+              return clean(node.textContent || '') || null;
+            } catch (e) {
+              return null;
             }
-            if (attr === 'datetime') {
-              var dt = node.getAttribute && node.getAttribute('datetime');
-              return clean(dt || '') || null;
-            }
-            if (attr === 'content') {
-              var c = node.getAttribute && node.getAttribute('content');
-              return clean(c || '') || null;
-            }
-            // default: text
-            return clean(node.textContent || '') || null;
+          }
+
+          var itemSelector = ${JSON.stringify(item_selector)};
+          var plan = ${JSON.stringify(listPlanEffective)};
+          var items = [];
+          var roots = [];
+          try {
+            roots = Array.from(document.querySelectorAll(itemSelector));
           } catch (e) {
-            return null;
+            roots = [];
           }
-        }
-
-        var itemSelector = ${JSON.stringify(item_selector)};
-        var plan = ${JSON.stringify(listRes.list_selector_plan)};
-        var items = [];
-        var roots = [];
-        try {
-          roots = Array.from(document.querySelectorAll(itemSelector));
-        } catch (e) {
-          roots = [];
-        }
-        for (var i = 0; i < roots.length; i++) {
-          var root = roots[i];
-          var out = { rank: i + 1, fields: {}, raw: {} };
-          var fields = (plan && plan.fields && Array.isArray(plan.fields)) ? plan.fields : [];
-          for (var j = 0; j < fields.length; j++) {
-            var f = fields[j] || {};
-            var key = String(f.field || '').trim();
-            if (!key) continue;
-            var sels = Array.isArray(f.selectors) ? f.selectors : [];
-            var attr = (typeof f.attr === 'string' && f.attr) ? f.attr : 'text';
-            var got = null;
-            var used = null;
-            for (var k = 0; k < sels.length; k++) {
-              var sel = String(sels[k] || '').trim();
-              if (!sel) continue;
-              var v = firstWithin(root, sel, attr);
-              if (v) { got = v; used = sel; break; }
+          for (var i = 0; i < roots.length; i++) {
+            var root = roots[i];
+            var out = { rank: i + 1, fields: {}, raw: {} };
+            var fields = (plan && plan.fields && Array.isArray(plan.fields)) ? plan.fields : [];
+            for (var j = 0; j < fields.length; j++) {
+              var f = fields[j] || {};
+              var key = String(f.field || '').trim();
+              if (!key) continue;
+              var sels = Array.isArray(f.selectors) ? f.selectors : [];
+              var attr = (typeof f.attr === 'string' && f.attr) ? f.attr : 'text';
+              var got = null;
+              var used = null;
+              for (var k = 0; k < sels.length; k++) {
+                var sel = String(sels[k] || '').trim();
+                if (!sel) continue;
+                var v = firstWithin(root, sel, attr);
+                if (v) { got = v; used = sel; break; }
+              }
+              out.fields[key] = got;
+              out.raw[key] = { selector: used, attr: attr, value: got };
             }
-            out.fields[key] = got;
-            out.raw[key] = { selector: used, attr: attr, value: got };
+            items.push(out);
           }
-          items.push(out);
-        }
-        return { count: items.length, items: items };
-      })()
-    `)) as any;
+          return { count: items.length, items: items };
+        })()
+      `)) as any;
+      const itemsRaw: any[] = Array.isArray(extracted?.items) ? extracted.items : [];
+      return itemsRaw;
+    };
 
-    const itemsRaw: any[] = Array.isArray(extracted?.items) ? extracted.items : [];
-    const baseUrl = url.toString();
-    const items = itemsRaw
-      .map((it) => {
+    const collected = new Map<string, any>();
+    const collectFromDom = async (): Promise<number> => {
+      const baseUrl = url.toString();
+      const rawItems = await extractVisibleRaw();
+      for (const it of rawItems) {
         const f = it && typeof it === 'object' ? (it.fields ?? {}) : {};
         const rawFields = it && typeof it === 'object' ? (it.raw ?? {}) : {};
         const title = typeof f.title === 'string' ? f.title : null;
         const urlAbs = toAbsoluteUrlMaybe(f.url, baseUrl);
+        if (!urlAbs) continue;
         const author = typeof f.author === 'string' ? f.author : null;
         const cover = toAbsoluteUrlMaybe(f.cover_image_url, baseUrl);
         const like = normalizeLikeCount(f.like_count);
         const published = normalizePublishedAt(f.published_at);
-        return {
-          rank: typeof it.rank === 'number' ? it.rank : null,
+
+        const next = {
+          rank: collected.size + 1,
           title,
           url: urlAbs,
           author,
@@ -528,8 +578,63 @@ cli({
             published_at_raw: published.raw,
           },
         };
-      })
-      .filter((x) => x.rank && x.url);
+
+        const prev = collected.get(urlAbs);
+        if (!prev) {
+          collected.set(urlAbs, next);
+          continue;
+        }
+        // Merge: keep earliest rank, fill missing fields.
+        collected.set(urlAbs, {
+          ...prev,
+          title: prev.title ?? next.title,
+          author: prev.author ?? next.author,
+          like_count: prev.like_count ?? next.like_count,
+          cover_image_url: prev.cover_image_url ?? next.cover_image_url,
+          published_at: prev.published_at ?? next.published_at,
+          raw_payload: prev.raw_payload ?? next.raw_payload,
+        });
+      }
+      return collected.size;
+    };
+
+    // Always collect the first viewport before scrolling (helps with virtualized lists).
+    await collectFromDom();
+
+    for (let i = 0; i < maxRounds; i++) {
+      try {
+        const before = collected.size;
+        if (maxItems && before >= maxItems) break;
+
+        await scrollOnce();
+        await page.wait(waitAfterScrollSecondsEffective);
+
+        await collectFromDom();
+        let after = collected.size;
+        if (after <= before) {
+          // Fallback: a short autoScroll can trigger IntersectionObserver-based loaders.
+          try {
+            await page.autoScroll({ times: 1, delayMs: Math.max(50, Math.floor(waitAfterScrollSecondsEffective * 1000)) });
+          } catch {}
+          try {
+            await page.wait(waitAfterScrollSecondsEffective);
+          } catch {}
+          await collectFromDom();
+          after = collected.size;
+        }
+
+        if (after <= lastCount) {
+          settle += 1;
+        } else {
+          settle = 0;
+          lastCount = after;
+        }
+        if (settleRounds > 0 && settle >= settleRounds) break;
+      } catch {}
+    }
+
+    const itemsAll = Array.from(collected.values());
+    const itemsLimited = maxItems ? itemsAll.slice(0, Math.max(1, maxItems)) : itemsAll;
 
     const result = {
       site: virtualSite,
@@ -539,7 +644,7 @@ cli({
         url_pattern: urlPattern,
         collected_at: nowIsoUtc8(),
       },
-      items,
+      items: itemsLimited,
     };
 
     if (artifactPaths && opencliRunId) {
@@ -565,7 +670,7 @@ cli({
       url: url.toString(),
       site: virtualSite,
       page_type: pageType,
-      items_count: items.length,
+      items_count: itemsLimited.length,
     };
   },
 });
