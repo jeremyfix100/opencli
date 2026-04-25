@@ -59,6 +59,36 @@ describe('xiaohongshu search', () => {
                     author_url: authorUrl,
                 },
             ],
+            // Third evaluate: unchanged extraction, loop should stop after stability checks
+            [
+                {
+                    title: '某鱼买FSD被坑了4万',
+                    author: '随风',
+                    likes: '261',
+                    url: detailUrl,
+                    author_url: authorUrl,
+                },
+            ],
+            // Fourth evaluate
+            [
+                {
+                    title: '某鱼买FSD被坑了4万',
+                    author: '随风',
+                    likes: '261',
+                    url: detailUrl,
+                    author_url: authorUrl,
+                },
+            ],
+            // Fifth evaluate
+            [
+                {
+                    title: '某鱼买FSD被坑了4万',
+                    author: '随风',
+                    likes: '261',
+                    url: detailUrl,
+                    author_url: authorUrl,
+                },
+            ],
         ]);
         const result = await cmd.func(page, { query: '特斯拉', limit: 1 });
         // Should only do one goto (the search page itself), no per-note detail navigation
@@ -105,6 +135,78 @@ describe('xiaohongshu search', () => {
                     author_url: '',
                 },
             ],
+            // Third evaluate: unchanged
+            [
+                {
+                    title: 'Result A',
+                    author: 'UserA',
+                    likes: '10',
+                    url: 'https://www.xiaohongshu.com/search_result/aaa',
+                    author_url: '',
+                },
+                {
+                    title: '',
+                    author: 'UserB',
+                    likes: '5',
+                    url: 'https://www.xiaohongshu.com/search_result/bbb',
+                    author_url: '',
+                },
+                {
+                    title: 'Result C',
+                    author: 'UserC',
+                    likes: '3',
+                    url: 'https://www.xiaohongshu.com/search_result/ccc',
+                    author_url: '',
+                },
+            ],
+            // Fourth evaluate: unchanged
+            [
+                {
+                    title: 'Result A',
+                    author: 'UserA',
+                    likes: '10',
+                    url: 'https://www.xiaohongshu.com/search_result/aaa',
+                    author_url: '',
+                },
+                {
+                    title: '',
+                    author: 'UserB',
+                    likes: '5',
+                    url: 'https://www.xiaohongshu.com/search_result/bbb',
+                    author_url: '',
+                },
+                {
+                    title: 'Result C',
+                    author: 'UserC',
+                    likes: '3',
+                    url: 'https://www.xiaohongshu.com/search_result/ccc',
+                    author_url: '',
+                },
+            ],
+            // Fifth evaluate: unchanged
+            [
+                {
+                    title: 'Result A',
+                    author: 'UserA',
+                    likes: '10',
+                    url: 'https://www.xiaohongshu.com/search_result/aaa',
+                    author_url: '',
+                },
+                {
+                    title: '',
+                    author: 'UserB',
+                    likes: '5',
+                    url: 'https://www.xiaohongshu.com/search_result/bbb',
+                    author_url: '',
+                },
+                {
+                    title: 'Result C',
+                    author: 'UserC',
+                    likes: '3',
+                    url: 'https://www.xiaohongshu.com/search_result/ccc',
+                    author_url: '',
+                },
+            ],
         ]);
         const result = (await cmd.func(page, { query: '测试', limit: 1 }));
         // limit=1 should return only the first valid-titled result
@@ -119,13 +221,37 @@ describe('xiaohongshu search', () => {
             'content',
             // Second evaluate: extraction (returns empty array)
             [],
+            // Third evaluate
+            [],
+            // Fourth evaluate
+            [],
+            // Fifth evaluate
+            [],
         ]);
         const result = (await cmd.func(page, { query: '测试等待', limit: 5 }));
         expect(result).toHaveLength(0);
         // Only one navigation, no retry
         expect(page.goto).toHaveBeenCalledTimes(1);
-        // Two evaluate calls: wait + extraction
-        expect(page.evaluate).toHaveBeenCalledTimes(2);
+        // At least wait + extraction loop
+        expect(page.evaluate.mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
+    it('caps effective limit at 1000', async () => {
+        const cmd = getRegistry().get('xiaohongshu/search');
+        expect(cmd?.func).toBeTypeOf('function');
+        const rows = Array.from({ length: 1200 }).map((_, i) => ({
+            title: `Row ${i + 1}`,
+            author: 'A',
+            likes: '1',
+            url: `https://www.xiaohongshu.com/search_result/${String(i).padStart(24, '0')}`,
+            author_url: '',
+        }));
+        const page = createPageMock([
+            'content',
+            rows,
+        ]);
+        const result = await cmd.func(page, { query: 'GEO', limit: 1500 });
+        expect(result).toHaveLength(1000);
+        expect(page.autoScroll).not.toHaveBeenCalled();
     });
 });
 describe('noteIdToDate (ObjectID timestamp parsing)', () => {

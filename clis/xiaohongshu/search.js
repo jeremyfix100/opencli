@@ -29,6 +29,61 @@ const WAIT_FOR_CONTENT_JS = `
     setTimeout(() => { observer.disconnect(); resolve('timeout'); }, 5000);
   })
 `;
+function resolveSoftDeadlineMs() {
+    const raw = Number(process.env.OPENCLI_XIAOHONGSHU_SEARCH_TIMEOUT ?? process.env.OPENCLI_BROWSER_COMMAND_TIMEOUT ?? 180);
+    const timeoutSeconds = Number.isFinite(raw) && raw > 0 ? raw : 180;
+    // Leave a small buffer to avoid hard timeout killing the whole run.
+    const budgetSeconds = Math.max(8, timeoutSeconds - 6);
+    return Date.now() + budgetSeconds * 1000;
+}
+
+const EXTRACT_RESULTS_JS = `
+  (() => {
+    const normalizeUrl = (href) => {
+      if (!href) return '';
+      if (href.startsWith('http://') || href.startsWith('https://')) return href;
+      if (href.startsWith('/')) return 'https://www.xiaohongshu.com' + href;
+      return '';
+    };
+
+    const cleanText = (value) => (value || '').replace(/\\s+/g, ' ').trim();
+
+    const results = [];
+    const seen = new Set();
+
+    document.querySelectorAll('section.note-item').forEach(el => {
+      // Skip "related searches" sections
+      if (el.classList.contains('query-note-item')) return;
+
+      const titleEl = el.querySelector('.title, .note-title, a.title, .footer .title span');
+      const nameEl = el.querySelector('a.author .name, .name, .author-name, .nick-name, a.author');
+      const likesEl = el.querySelector('.count, .like-count, .like-wrapper .count');
+      // Prefer search_result link (preserves xsec_token) over generic /explore/ link
+      const detailLinkEl =
+        el.querySelector('a.cover.mask') ||
+        el.querySelector('a[href*="/search_result/"]') ||
+        el.querySelector('a[href*="/explore/"]') ||
+        el.querySelector('a[href*="/note/"]');
+      const authorLinkEl = el.querySelector('a.author, a[href*="/user/profile/"]');
+
+      const url = normalizeUrl(detailLinkEl?.getAttribute('href') || '');
+      if (!url) return;
+
+      if (seen.has(url)) return;
+      seen.add(url);
+
+      results.push({
+        title: cleanText(titleEl?.textContent || ''),
+        author: cleanText(nameEl?.textContent || ''),
+        likes: cleanText(likesEl?.textContent || '0'),
+        url,
+        author_url: normalizeUrl(authorLinkEl?.getAttribute('href') || ''),
+      });
+    });
+
+    return results;
+  })()
+`;
 /**
  * Extract approximate publish date from a Xiaohongshu note URL.
  * XHS note IDs follow MongoDB ObjectID format where the first 8 hex
@@ -53,6 +108,7 @@ cli({
     description: '搜索小红书笔记',
     domain: 'www.xiaohongshu.com',
     strategy: Strategy.COOKIE,
+    timeoutSeconds: Math.max(90, Number(process.env.OPENCLI_XIAOHONGSHU_SEARCH_TIMEOUT ?? 180) || 180),
     navigateBefore: false,
     args: [
         { name: 'query', required: true, positional: true, help: 'Search keyword' },
@@ -60,6 +116,9 @@ cli({
     ],
     columns: ['rank', 'title', 'author', 'likes', 'published_at', 'url'],
     func: async (page, kwargs) => {
+        const parsedLimit = Number(kwargs.limit ?? 20);
+        const targetLimit = Math.max(1, Math.min(1000, Number.isFinite(parsedLimit) ? parsedLimit : 20));
+        const deadlineMs = resolveSoftDeadlineMs();
         const keyword = encodeURIComponent(kwargs.query);
         await page.goto(`https://www.xiaohongshu.com/search_result?keyword=${keyword}&source=web_search_result_notes`);
         // Wait for search results to render (or login wall to appear).
@@ -69,60 +128,39 @@ cli({
         if (waitResult === 'login_wall') {
             throw new AuthRequiredError('www.xiaohongshu.com', 'Xiaohongshu search results are blocked behind a login wall');
         }
-        // Scroll a couple of times to load more results
-        await page.autoScroll({ times: 2 });
-        const payload = await page.evaluate(`
-      (() => {
-        const normalizeUrl = (href) => {
-          if (!href) return '';
-          if (href.startsWith('http://') || href.startsWith('https://')) return href;
-          if (href.startsWith('/')) return 'https://www.xiaohongshu.com' + href;
-          return '';
-        };
-
-        const cleanText = (value) => (value || '').replace(/\\s+/g, ' ').trim();
-
-        const results = [];
-        const seen = new Set();
-
-        document.querySelectorAll('section.note-item').forEach(el => {
-          // Skip "related searches" sections
-          if (el.classList.contains('query-note-item')) return;
-
-          const titleEl = el.querySelector('.title, .note-title, a.title, .footer .title span');
-          const nameEl = el.querySelector('a.author .name, .name, .author-name, .nick-name, a.author');
-          const likesEl = el.querySelector('.count, .like-count, .like-wrapper .count');
-          // Prefer search_result link (preserves xsec_token) over generic /explore/ link
-          const detailLinkEl =
-            el.querySelector('a.cover.mask') ||
-            el.querySelector('a[href*="/search_result/"]') ||
-            el.querySelector('a[href*="/explore/"]') ||
-            el.querySelector('a[href*="/note/"]');
-          const authorLinkEl = el.querySelector('a.author, a[href*="/user/profile/"]');
-
-          const url = normalizeUrl(detailLinkEl?.getAttribute('href') || '');
-          if (!url) return;
-
-          const key = url;
-          if (seen.has(key)) return;
-          seen.add(key);
-
-          results.push({
-            title: cleanText(titleEl?.textContent || ''),
-            author: cleanText(nameEl?.textContent || ''),
-            likes: cleanText(likesEl?.textContent || '0'),
-            url,
-            author_url: normalizeUrl(authorLinkEl?.getAttribute('href') || ''),
-          });
-        });
-
-        return results;
-      })()
-    `);
-        const data = Array.isArray(payload) ? payload : [];
+        // Keep scrolling and extracting until target is reached or the page stops growing.
+        const maxRounds = 40;
+        let stableRounds = 0;
+        let prevCount = -1;
+        let data = [];
+        for (let round = 0; round < maxRounds; round += 1) {
+            if (Date.now() >= deadlineMs)
+                break;
+            const payload = await page.evaluate(EXTRACT_RESULTS_JS);
+            data = Array.isArray(payload) ? payload.filter((item) => item?.title) : [];
+            if (data.length >= targetLimit)
+                break;
+            if (data.length === prevCount) {
+                stableRounds += 1;
+            }
+            else {
+                stableRounds = 0;
+                prevCount = data.length;
+            }
+            if (stableRounds >= 3)
+                break;
+            if (Date.now() >= deadlineMs)
+                break;
+            const remaining = Math.max(0, targetLimit - data.length);
+            const scrollTimes = Math.max(1, Math.min(5, Math.ceil(remaining / 40)));
+            await page.autoScroll({ times: scrollTimes });
+            const leftMs = deadlineMs - Date.now();
+            if (leftMs <= 0)
+                break;
+            await page.wait(Math.min(400, Math.max(80, leftMs)));
+        }
         return data
-            .filter((item) => item.title)
-            .slice(0, kwargs.limit)
+            .slice(0, targetLimit)
             .map((item, i) => ({
             rank: i + 1,
             ...item,
