@@ -72,7 +72,6 @@ const INDUSTRY_MAP: Record<string, Industry> = {
   'xianyu': 'ecommerce',
   'steam': 'ecommerce',
   'indiegogo': 'ecommerce',
-  'kickstarter': 'ecommerce',
   'stackoverflow': 'developer',
   'devto': 'developer',
   'github': 'developer',
