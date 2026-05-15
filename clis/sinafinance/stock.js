@@ -53,6 +53,7 @@ function fmtMktCap(val) {
 cli({
     site: 'sinafinance',
     name: 'stock',
+    access: 'read',
     description: '新浪财经行情（A股/港股/美股）',
     domain: 'suggest3.sinajs.cn,hq.sinajs.cn',
     strategy: Strategy.PUBLIC,
@@ -62,7 +63,7 @@ cli({
         { name: 'market', type: 'string', default: 'auto', help: 'Market: cn, hk, us, auto (default: auto searches cn → hk → us)' },
     ],
     columns: ['Symbol', 'Name', 'Price', 'Change', 'ChangePercent', 'Open', 'High', 'Low', 'Volume', 'MarketCap'],
-    func: async (_page, args) => {
+    func: async (args) => {
         const key = String(args.key);
         const market = String(args.market);
         const marketMap = {
@@ -79,12 +80,15 @@ cli({
         if (!entries.length) {
             throw new CliError('NOT_FOUND', `No stock found for "${key}"`, 'Try a different name, code, or --market');
         }
-        // Pick best match: score by name similarity, tiebreak by market priority
+        // Pick best match: score by name/symbol similarity, tiebreak by market priority
         const needle = key.toLowerCase();
         const score = (e) => {
             const n = e.name.toLowerCase();
-            if (n === needle)
+            const s = e.symbol.toLowerCase();
+            if (s === needle || n === needle)
                 return 1;
+            if (s.includes(needle))
+                return needle.length / s.length;
             if (n.includes(needle))
                 return needle.length / n.length;
             return 0;

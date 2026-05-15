@@ -1,10 +1,11 @@
-import { execSync, spawnSync } from 'node:child_process';
+import { execSync } from 'node:child_process';
 import { cli, Strategy } from '@jackwener/opencli/registry';
-import { ConfigError } from '@jackwener/opencli/errors';
-import { activateChatGPT, getVisibleChatMessages, selectModel, MODEL_CHOICES, isGenerating } from './ax.js';
+import { ArgumentError, ConfigError } from '@jackwener/opencli/errors';
+import { activateChatGPT, getVisibleChatMessages, selectModel, MODEL_CHOICES, isGenerating, sendPrompt } from './ax.js';
 export const askCommand = cli({
     site: 'chatgpt-app',
     name: 'ask',
+    access: 'write',
     description: 'Send a prompt and wait for the AI response (send + wait + read)',
     domain: 'localhost',
     strategy: Strategy.PUBLIC,
@@ -12,41 +13,28 @@ export const askCommand = cli({
     args: [
         { name: 'text', required: true, positional: true, help: 'Prompt to send' },
         { name: 'model', required: false, help: 'Model/mode to use: auto, instant, thinking, 5.2-instant, 5.2-thinking', choices: MODEL_CHOICES },
-        { name: 'timeout', required: false, help: 'Max seconds to wait for response (default: 30)', default: '30' },
+        { name: 'timeout', type: 'int', required: false, help: 'Max seconds to wait for response (default: 30)', default: 30 },
     ],
     columns: ['Role', 'Text'],
-    func: async (page, kwargs) => {
+    func: async (kwargs) => {
         if (process.platform !== 'darwin') {
             throw new ConfigError('ChatGPT Desktop integration requires macOS (osascript is not available on this platform)');
         }
         const text = kwargs.text;
         const model = kwargs.model;
-        const timeout = parseInt(kwargs.timeout, 10) || 30;
+        const timeout = kwargs.timeout;
+        if (!Number.isInteger(timeout) || timeout < 1) {
+            throw new ArgumentError('--timeout must be a positive integer (seconds)');
+        }
         // Switch model before sending if requested
         if (model) {
             activateChatGPT();
             selectModel(model);
         }
-        // Backup clipboard
-        let clipBackup = '';
-        try {
-            clipBackup = execSync('pbpaste', { encoding: 'utf-8' });
-        }
-        catch { }
         const messagesBefore = getVisibleChatMessages();
         // Send the message
-        spawnSync('pbcopy', { input: text });
         activateChatGPT();
-        const cmd = "osascript " +
-            "-e 'tell application \"System Events\"' " +
-            "-e 'keystroke \"v\" using command down' " +
-            "-e 'delay 0.2' " +
-            "-e 'keystroke return' " +
-            "-e 'end tell'";
-        execSync(cmd);
-        // Restore clipboard after the prompt is sent.
-        if (clipBackup)
-            spawnSync('pbcopy', { input: clipBackup });
+        sendPrompt(text);
         // Wait for response: poll until ChatGPT stops generating ("Stop generating" button disappears),
         // then read the final response text.
         const pollInterval = 2;

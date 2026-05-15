@@ -1,3 +1,4 @@
+import { JSDOM } from 'jsdom';
 import { describe, expect, it, vi } from 'vitest';
 import { CommandExecutionError } from '@jackwener/opencli/errors';
 import {
@@ -144,6 +145,85 @@ describe('doubao send strategy', () => {
         await expect(sendDoubaoMessage(page, '你好')).rejects.toBeInstanceOf(CommandExecutionError);
     });
 });
+describe('doubao receive strategy', () => {
+    function runTurnsScript(html) {
+        const dom = new JSDOM(html, { url: 'https://www.doubao.com/chat', runScripts: 'outside-only' });
+        Object.defineProperty(dom.window.HTMLElement.prototype, 'innerText', {
+            configurable: true,
+            get() {
+                return this.textContent || '';
+            },
+        });
+        dom.window.HTMLElement.prototype.getBoundingClientRect = () => ({
+            width: 100,
+            height: 24,
+            top: 0,
+            left: 0,
+            right: 100,
+            bottom: 24,
+            x: 0,
+            y: 0,
+            toJSON: () => ({}),
+        });
+        return dom.window.eval(__test__.getTurnsScript());
+    }
+
+    it('keeps both the new skin selectors and the older structural fallbacks in the turns script', () => {
+        const turnsScript = __test__.getTurnsScript();
+        expect(turnsScript).toContain('[class*="message-list-S2Fv2S"]');
+        expect(turnsScript).toContain('.container-PvPoAn');
+        expect(turnsScript).toContain('[data-testid="message-list"]');
+        expect(turnsScript).toContain('[class*="bg-g-receive-msg-bubble"]');
+        expect(turnsScript).toContain('[data-testid="receive_message"]');
+        expect(turnsScript).toContain('[data-foundation-type="receive-message-action-bar"]');
+        expect(turnsScript).toContain('[data-testid="union_message"]');
+        expect(turnsScript).toContain('[data-testid="message-block-container"]');
+    });
+
+    it('includes the 2026-05 doubao DOM-refactor inner-item / top-item wrappers and the flow-markdown-body assistant fallback', () => {
+        const turnsScript = __test__.getTurnsScript();
+        // New wrappers added to itemSelectors so message roots resolve under the
+        // refactored DOM where the legacy item-kDun2N / union_message / message-block-container
+        // / data-message-id selectors no longer match.
+        expect(turnsScript).toContain('[class*="inner-item-"]');
+        expect(turnsScript).toContain('[class*="top-item-"]');
+        // Assistant fallback: post-refactor doubao no longer emits receive-message /
+        // bg-g-receive-msg-bubble markup. Only signal is .flow-markdown-body content
+        // container without send-bubble.
+        expect(turnsScript).toContain('.flow-markdown-body');
+    });
+
+    it('extracts clean assistant turns from the 2026-05 wrapper DOM without using whole-page chrome', () => {
+        const turns = runTurnsScript(`
+          <main>
+            <aside>历史对话</aside>
+            <section class="message-list-S2Fv2S">
+              <div class="top-item-user">
+                <div class="inner-item-user">
+                  <div class="bg-g-send-msg-bubble">测试一下，只回复OK</div>
+                </div>
+              </div>
+              <div class="top-item-assistant">
+                <div class="inner-item-assistant">
+                  <div class="flow-markdown-body"><p>OK</p></div>
+                </div>
+              </div>
+            </section>
+          </main>
+        `);
+
+        expect(turns).toEqual([
+            { Role: 'User', Text: '测试一下，只回复OK' },
+            { Role: 'Assistant', Text: 'OK' },
+        ]);
+    });
+
+    it('extends transcript-noise cleanup for the current zh-CN chrome copy', () => {
+        const transcriptScript = __test__.getTranscriptLinesScript();
+        expect(transcriptScript).toContain('请仔细甄别');
+        expect(transcriptScript).toContain('下载电脑版');
+    });
+});
 describe('collectDoubaoTranscriptAdditions', () => {
     it('ignores landing-page capability chips that are not assistant content', () => {
         const before = ['older'];
@@ -202,9 +282,10 @@ describe('collectDoubaoTranscriptAdditions', () => {
         expect(collectDoubaoTranscriptAdditions(before, current, '测试一下，只回复OK', (value) => value.replace('测试一下，只回复OK', '').trim())).toBe('');
     });
     it('treats only the exact landing-page chip string as UI noise', () => {
-        expect(__test__.clickSendButtonScript()).not.toContain('document,');
+        expect(__test__.clickSendButtonScript()).toContain("button#flow-end-msg-send");
+        expect(__test__.clickSendButtonScript()).toContain("getAttribute('disabled') !== null");
+        expect(__test__.clickSendButtonScript()).toContain("getAttribute('aria-disabled') === 'true'");
         expect(__test__.clickSendButtonScript()).toContain('bestScore >= 200');
-        expect(__test__.clickSendButtonScript()).not.toContain("|| !!button.closest('.chat-input-button')");
         expect(__test__.clickSendButtonScript()).toContain("button.getAttribute('type') === 'submit') score += 1200");
         expect(__test__.composerStateScript()).toContain("(composer.innerText || '').trim() || (composer.textContent || '').trim()");
         expect(__test__.detectDoubaoVerificationScript()).not.toContain('document.body?.innerText');

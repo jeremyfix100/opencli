@@ -1,7 +1,33 @@
+import { ArgumentError } from '@jackwener/opencli/errors';
+
 export const DEEPSEEK_DOMAIN = 'chat.deepseek.com';
 export const DEEPSEEK_URL = 'https://chat.deepseek.com/';
 export const TEXTAREA_SELECTOR = 'textarea[placeholder*="DeepSeek"]';
 export const MESSAGE_SELECTOR = '.ds-message';
+const CONVERSATION_ID_RE = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
+
+/**
+ * Normalize a DeepSeek conversation ID. Accepts a bare UUID or any URL that
+ * embeds one (`/a/chat/s/<id>` or full chat URL).
+ *
+ * Throws ArgumentError when the input does not contain a UUID-shaped id, so
+ * `detail` fails before any browser navigation happens.
+ */
+export function parseDeepSeekConversationId(input) {
+    const raw = String(input ?? '').trim();
+    if (!raw) {
+        throw new ArgumentError('id', 'must be a non-empty conversation ID or URL');
+    }
+    const urlMatch = raw.match(/\/a\/chat\/s\/([a-f0-9-]+)/i);
+    const candidate = urlMatch ? urlMatch[1] : raw;
+    if (!CONVERSATION_ID_RE.test(candidate)) {
+        throw new ArgumentError(
+            'id',
+            `not a valid DeepSeek conversation ID (got "${input}"); expected a UUID like "749e6bbd-6a45-4440-beaa-ae5238bf06d8" or a full /a/chat/s/<id> URL`,
+        );
+    }
+    return candidate.toLowerCase();
+}
 
 export async function isOnDeepSeek(page) {
     const url = await page.evaluate('window.location.href').catch(() => '');
@@ -15,10 +41,17 @@ export async function isOnDeepSeek(page) {
 }
 
 export async function ensureOnDeepSeek(page) {
-    if (!(await isOnDeepSeek(page))) {
-        await page.goto(DEEPSEEK_URL);
-        await page.wait(3);
+    if (await isOnDeepSeek(page)) return false;
+    await page.goto(DEEPSEEK_URL);
+    // Wait for the composer textarea instead of a fixed 3 s sleep. On the login
+    // page it never mounts; swallow the timeout so callers (status / read /
+    // history) can still inspect page state.
+    try {
+        await page.wait({ selector: TEXTAREA_SELECTOR, timeout: 8 });
+    } catch {
+        // Login or error page — downstream will see hasTextarea=false / empty results.
     }
+    return true;
 }
 
 export async function getPageState(page) {
@@ -40,9 +73,10 @@ export async function selectModel(page, modelName) {
     return page.evaluate(`(() => {
         var radios = document.querySelectorAll('div[role="radio"]');
         if (radios.length === 0) return { ok: false };
-        var isFirst = '${modelName}'.toLowerCase() === 'instant';
-        if (!isFirst && radios.length < 2) return { ok: false };
-        var target = isFirst ? radios[0] : radios[radios.length - 1];
+        var name = '${modelName}'.toLowerCase();
+        var index = name === 'instant' ? 0 : name === 'expert' ? 1 : name === 'vision' ? 2 : -1;
+        if (index < 0 || index >= radios.length) return { ok: false };
+        var target = radios[index];
         var alreadySelected = target.getAttribute('aria-checked') === 'true';
         if (!alreadySelected) target.click();
         return { ok: true, toggled: !alreadySelected };
@@ -74,14 +108,18 @@ export async function sendMessage(page, prompt) {
         document.execCommand('insertText', false, ${promptJson});
         await new Promise(r => setTimeout(r, 800));
 
-        const btns = document.querySelectorAll('div[role="button"]');
-        for (const btn of btns) {
-            if (btn.getAttribute('aria-disabled') === 'false') {
-                const svgs = btn.querySelectorAll('svg');
-                if (svgs.length > 0 && btn.closest('div')?.querySelector('textarea')) {
-                    btn.click();
-                    return { ok: true };
-                }
+        // Find the send button: last non-toggle button in the textarea's container
+        var container = box.parentElement;
+        while (container && !container.querySelector('div[role="button"]')) {
+            container = container.parentElement;
+        }
+        if (container) {
+            var btns = container.querySelectorAll('div[role="button"]:not(.ds-toggle-button)');
+            var sendBtn = btns[btns.length - 1];
+            if (sendBtn && sendBtn.getAttribute('aria-disabled') === 'false'
+                && sendBtn.querySelectorAll('svg').length > 0) {
+                sendBtn.click();
+                return { ok: true };
             }
         }
 
@@ -252,8 +290,7 @@ export async function getConversationList(page) {
             const items = [];
             const links = document.querySelectorAll('a[href*="/a/chat/s/"]');
             links.forEach((link, i) => {
-                const titleEl = link.querySelector('div');
-                const title = titleEl ? titleEl.textContent.trim() : '';
+                const title = (link.innerText || '').trim().split('\\n')[0].trim();
                 const href = link.getAttribute('href') || '';
                 const idMatch = href.match(/\\/s\\/([a-f0-9-]+)/);
                 items.push({
@@ -270,13 +307,62 @@ export async function getConversationList(page) {
     return [];
 }
 
+/**
+ * Pick the URL of the most recent non-pinned conversation, or the first overall
+ * if every visible conversation is pinned.
+ *
+ * Used by `ask` when the workspace was recycled and we need to resume an
+ * existing thread instead of opening a new chat. Polls the sidebar for up to
+ * 10s and returns null if no conversation links surface in time, so callers
+ * can fail fast instead of silently navigating to a fresh page.
+ *
+ * Pinned detection is text-based on the section header ("置顶" / "Pinned"),
+ * because DeepSeek's CSS-module class names are randomized per build.
+ */
+export async function pickResumeUrl(page) {
+    await page.evaluate(`(() => {
+        if (document.querySelectorAll('a[href*="/a/chat/s/"]').length === 0) {
+            const btn = document.querySelector('div[tabindex="0"][role="button"]');
+            if (btn) btn.click();
+        }
+    })()`);
+    for (let attempt = 0; attempt < 5; attempt++) {
+        await page.wait(2);
+        const url = await page.evaluate(`(() => {
+            const links = document.querySelectorAll('a[href*="/a/chat/s/"]');
+            if (links.length === 0) return null;
+            const PINNED_HEADER = /^\\s*(置\\s*顶|Pinned)\\s*$/i;
+            const isPinned = (link) => {
+                const section = link.parentElement;
+                const header = section && section.firstElementChild;
+                if (!header || header === link) return false;
+                return PINNED_HEADER.test((header.innerText || header.textContent || '').trim());
+            };
+            const target = Array.from(links).find((l) => !isPinned(l)) || links[0];
+            const href = target.getAttribute('href') || '';
+            return href ? 'https://chat.deepseek.com' + href : null;
+        })()`);
+        if (url) return url;
+    }
+    return null;
+}
+
 async function waitForFilePreview(page, fileName) {
     for (let attempt = 0; attempt < 8; attempt++) {
         await page.wait(2);
         const ready = await page.evaluate(`(() => {
-            const name = ${JSON.stringify(fileName)};
-            return Array.from(document.querySelectorAll('div'))
-                .some((el) => el.children.length === 0 && (el.textContent || '').trim() === name);
+            var name = ${JSON.stringify(fileName)};
+            var hasFileName = Array.from(document.querySelectorAll('div'))
+                .some(function(el) { return el.children.length === 0 && (el.textContent || '').trim() === name; });
+            if (hasFileName) return true;
+            // Vision mode shows an image thumbnail, not filename text. Require
+            // a preview-like node here; send-button readiness is checked later.
+            var box = document.querySelector('${TEXTAREA_SELECTOR}');
+            if (!box) return false;
+            var c = box.parentElement;
+            while (c && !c.querySelector('div[role="button"]')) c = c.parentElement;
+            if (!c) return false;
+            return !!c.querySelector('img[src], canvas, video, [style*="background-image"], [class*="preview"], [class*="upload"]');
         })()`);
         if (ready) return true;
     }
@@ -315,7 +401,7 @@ export async function sendWithFile(page, filePath, prompt) {
             uploaded = true;
         } catch (err) {
             const msg = String(err?.message || err);
-            if (!msg.includes('Unknown action') && !msg.includes('not supported')) {
+            if (!msg.includes('Unknown action') && !msg.includes('not supported') && !msg.includes('Not allowed')) {
                 throw err;
             }
         }
@@ -342,7 +428,8 @@ export async function sendWithFile(page, filePath, prompt) {
             }
 
             inp.files = dt.files;
-            inp[propsKey].onChange({ target: { files: dt.files } });
+            // Use inp.files, not dt.files; assignment transfers ownership
+            inp[propsKey].onChange({ target: { files: inp.files } });
             return { ok: true };
         })()`);
         if (fallbackResult && !fallbackResult.ok) return fallbackResult;
@@ -350,6 +437,30 @@ export async function sendWithFile(page, filePath, prompt) {
 
     const ready = await waitForFilePreview(page, fileName);
     if (!ready) return { ok: false, reason: 'file preview did not appear' };
+
+    // File preview appears immediately but send button stays disabled until
+    // the server upload finishes. Wait for it.
+    let sendEnabled = false;
+    for (let tick = 0; tick < 15; tick++) {
+        const enabled = await page.evaluate(`(() => {
+            var box = document.querySelector('${TEXTAREA_SELECTOR}');
+            if (!box) return false;
+            var c = box.parentElement;
+            while (c && !c.querySelector('div[role="button"]')) c = c.parentElement;
+            if (!c) return false;
+            var btns = c.querySelectorAll('div[role="button"]:not(.ds-toggle-button)');
+            var last = btns[btns.length - 1];
+            return !!(last && last.getAttribute('aria-disabled') === 'false');
+        })()`);
+        if (enabled) {
+            sendEnabled = true;
+            break;
+        }
+        await page.wait(1);
+    }
+    if (!sendEnabled) {
+        return { ok: false, reason: 'send button did not enable after upload' };
+    }
 
     return sendMessage(page, prompt);
 }

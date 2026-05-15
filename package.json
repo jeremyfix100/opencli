@@ -1,6 +1,6 @@
 {
   "name": "@jackwener/opencli",
-  "version": "1.6.8",
+  "version": "1.7.22",
   "publishConfig": {
     "access": "public"
   },
@@ -35,8 +35,8 @@
   },
   "files": [
     "dist/src/",
-    "dist/clis/",
-    "dist/cli-manifest.json",
+    "clis/",
+    "cli-manifest.json",
     "scripts/",
     "README.md",
     "LICENSE"
@@ -44,27 +44,29 @@
   "scripts": {
     "dev": "tsx src/main.ts",
     "dev:bun": "bun src/main.ts",
-    "build": "npm run clean-dist && tsc && npm run clean-yaml && npm run copy-yaml && npm run build-manifest",
-    "build-manifest": "node dist/src/build-manifest.js",
+    "build": "npm run clean-dist && npm run copy-yaml && npm run build-manifest",
+    "prebuild-manifest": "tsc --build",
+    "build-manifest": "tsx src/build-manifest.ts",
     "clean-dist": "node scripts/clean-dist.cjs",
-    "clean-yaml": "node scripts/clean-yaml.cjs",
     "copy-yaml": "node scripts/copy-yaml.cjs",
     "start": "node dist/src/main.js",
     "start:bun": "bun dist/src/main.js",
+    "preuninstall": "node -e \"fetch('http://127.0.0.1:'+(process.env.OPENCLI_DAEMON_PORT||'19825')+'/shutdown',{method:'POST',headers:{'X-OpenCLI':'1'},signal:AbortSignal.timeout(3000)}).catch(()=>{})\" || true",
     "postinstall": "node scripts/postinstall.js || true; node scripts/fetch-adapters.js || true",
     "typecheck": "tsc --noEmit",
-    "lint": "tsc --noEmit",
     "prepare": "[ -d src ] && npm run build || true",
     "prepublishOnly": "npm run build",
-    "test": "vitest run --project unit",
-    "test:bun": "bun vitest run --project unit",
+    "test": "vitest run --project unit --project extension --project adapter",
+    "test:bun": "bun vitest run --project unit --project extension --project adapter",
     "test:adapter": "vitest run --project adapter",
     "test:all": "vitest run",
     "test:e2e": "vitest run --project e2e",
+    "advise:listing-id-pairing": "node scripts/check-listing-id-pairing.mjs",
+    "check:silent-column-drop": "node scripts/check-silent-column-drop.mjs",
+    "check:typed-error-lint": "node scripts/check-typed-error-lint.mjs",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
-    "docs:preview": "vitepress preview docs",
-    "docs:commands": "tsx scripts/generate-commands.ts"
+    "docs:preview": "vitepress preview docs"
   },
   "keywords": [
     "cli",
@@ -79,21 +81,23 @@
     "url": "git+https://github.com/jackwener/opencli.git"
   },
   "dependencies": {
-    "@rolldown/binding-darwin-arm64": "^1.0.0-rc.13",
-    "chalk": "^5.3.0",
+    "@mozilla/readability": "^0.6.0",
     "cli-table3": "^0.6.5",
     "commander": "^14.0.3",
-    "mkt-learning-engine": "file:../mkt-learning-engine",
     "js-yaml": "^4.1.0",
+    "mkt-learning-engine": "file:../mkt-learning-engine",
     "turndown": "^7.2.2",
-    "undici": "^7.24.6",
+    "turndown-plugin-gfm": "^1.0.2",
+    "undici": "^6.25.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@types/jsdom": "^27.0.0",
     "@types/js-yaml": "^4.0.9",
-    "@types/node": "^22.13.10",
+    "@types/node": "^25.5.2",
     "@types/turndown": "^5.0.6",
     "@types/ws": "^8.5.13",
+    "jsdom": "^29.0.2",
     "tsx": "^4.19.3",
     "typescript": "^6.0.2",
     "vitepress": "^1.6.4",
