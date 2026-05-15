@@ -586,6 +586,87 @@
   },
   {
     "site": "36kr",
+    "name": "pitchhub",
+    "description": "36氪融资事件库（整体/碎片爬取，自动翻页，断点续爬）",
+    "access": "read",
+    "domain": "pitchhub.36kr.com",
+    "strategy": "public",
+    "browser": true,
+    "args": [
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 100,
+        "required": false,
+        "help": "总条数上限 (default 100)"
+      },
+      {
+        "name": "pageSize",
+        "type": "int",
+        "default": 20,
+        "required": false,
+        "help": "每页条数 (default 20, max 20)"
+      },
+      {
+        "name": "pageNo",
+        "type": "int",
+        "default": 1,
+        "required": false,
+        "help": "起始页码 (default 1, 仅整体模式)"
+      },
+      {
+        "name": "years",
+        "type": "string",
+        "default": "",
+        "required": false,
+        "help": "融资年份，逗号分隔，如 \"2026\""
+      },
+      {
+        "name": "industries",
+        "type": "string",
+        "default": "",
+        "required": false,
+        "help": "行业ID列表，逗号分隔（碎片模式），如 \"9,10,11\""
+      },
+      {
+        "name": "rounds",
+        "type": "string",
+        "default": "",
+        "required": false,
+        "help": "轮次ID列表，逗号分隔（碎片模式），如 \"1,2,3\""
+      },
+      {
+        "name": "delay",
+        "type": "int",
+        "default": 500,
+        "required": false,
+        "help": "翻页间隔毫秒 (default 500)"
+      },
+      {
+        "name": "resume",
+        "type": "bool",
+        "default": false,
+        "required": false,
+        "help": "从上次 checkpoint 断点续爬"
+      }
+    ],
+    "columns": [
+      "financingDate",
+      "projectName",
+      "projectBrief",
+      "projectLogo",
+      "industry",
+      "round",
+      "amount",
+      "investors",
+      "projectUrl"
+    ],
+    "type": "js",
+    "modulePath": "36kr/pitchhub.js",
+    "sourceFile": "36kr/pitchhub.js"
+  },
+  {
+    "site": "36kr",
     "name": "search",
     "description": "搜索36氪文章",
     "access": "read",
@@ -26307,7 +26388,7 @@
       }
     ],
     "columns": [
-      "rank",
+      "order",
       "title",
       "author",
       "likes",

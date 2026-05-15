@@ -280,7 +280,7 @@ export const command = cli({
         { name: 'query', required: true, positional: true, help: 'Search keyword' },
         { name: 'limit', type: 'int', default: 20, help: 'Number of results' },
     ],
-    columns: ['rank', 'title', 'author', 'likes', 'published_at', 'url'],
+    columns: ['order', 'title', 'author', 'likes', 'published_at', 'url'],
     func: async (page, kwargs) => {
         const limit = parseLimit(kwargs.limit);
         const keyword = encodeURIComponent(kwargs.query);
@@ -320,7 +320,7 @@ export const command = cli({
             .filter((item) => item.title)
             .slice(0, limit)
             .map((item, i) => ({
-            rank: i + 1,
+            order: i + 1,
             ...item,
             published_at: noteIdToDate(item.url),
         }));

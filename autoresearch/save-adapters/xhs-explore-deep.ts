@@ -10,7 +10,7 @@ cli({
   args: [
     { name: 'limit', type: 'int', default: 15, help: 'Number of items' },
   ],
-  columns: ['rank', 'title', 'author', 'likes', 'url'],
+  columns: ['order', 'title', 'author', 'likes', 'url'],
   func: async (page, kwargs) => {
     const limit = kwargs.limit ?? 15;
     // Step 1: Navigate to explore page
@@ -58,7 +58,7 @@ cli({
     const sorted = (result as any[] || []).sort((a: any, b: any) => b.likes - a.likes);
     // Step 6: Slice and format
     return sorted.slice(0, limit).map((item: any, i: number) => ({
-      rank: i + 1, title: item.title, author: item.author, likes: String(item.likes), url: item.url,
+      order: i + 1, title: item.title, author: item.author, likes: String(item.likes), url: item.url,
     }));
   },
 });

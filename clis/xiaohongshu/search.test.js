@@ -94,7 +94,7 @@ describe('xiaohongshu search', () => {
         expect(page.goto.mock.calls).toHaveLength(1);
         expect(result).toEqual([
             {
-                rank: 1,
+                order: 1,
                 title: '某鱼买FSD被坑了4万',
                 author: '随风',
                 likes: '261',
@@ -150,7 +150,7 @@ describe('xiaohongshu search', () => {
         const result = (await cmd.func(page, { query: '测试', limit: 1 }));
         // limit=1 should return only the first valid-titled result
         expect(result).toHaveLength(1);
-        expect(result[0]).toMatchObject({ rank: 1, title: 'Result A' });
+        expect(result[0]).toMatchObject({ order: 1, title: 'Result A' });
     });
     it('waits for content via MutationObserver before extracting', async () => {
         const cmd = getRegistry().get('xiaohongshu/search');

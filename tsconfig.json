@@ -15,5 +15,5 @@
   "include": [
     "src/**/*.ts"
   ],
-  "exclude": ["node_modules", "dist", "extension"]
+  "exclude": ["node_modules", "dist", "extension", "src/**/*.test.ts", "src/**/*.e2e.test.ts", "src/selector-learning.ts", "src/selector-learning-engine.test.ts"]
 }

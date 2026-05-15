@@ -11,7 +11,7 @@ cli({
     { name: 'query', type: 'string', default: '咖啡', positional: true, help: 'Search query' },
     { name: 'limit', type: 'int', default: 10, help: 'Number of results' },
   ],
-  columns: ['rank', 'title', 'author', 'likes', 'url'],
+  columns: ['order', 'title', 'author', 'likes', 'url'],
   func: async (page, kwargs) => {
     const query = encodeURIComponent(kwargs.query ?? '咖啡');
     const limit = kwargs.limit ?? 10;
@@ -56,7 +56,7 @@ cli({
       return items;
     })()`);
     return (result as any[]).slice(0, limit).map((item: any, i: number) => ({
-      rank: i + 1, title: item.title, author: item.author, likes: item.likes, url: item.url,
+      order: i + 1, title: item.title, author: item.author, likes: item.likes, url: item.url,
     }));
   },
 });
