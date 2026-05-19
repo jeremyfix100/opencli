@@ -264,7 +264,10 @@ export async function sendMessage(page, prompt) {
     };
     let submit = null;
     for (let attempt = 0; attempt < 12; attempt += 1) {
-      const candidate = Array.from(document.querySelectorAll('button[aria-label="Submit"]')).find(isClickableSubmit);
+      const candidate = (
+        document.querySelector('[data-testid="chat-submit"]')
+        || Array.from(document.querySelectorAll('button[aria-label="Submit"], button[aria-label="提交"]')).find(isClickableSubmit)
+      );
       if (candidate instanceof HTMLButtonElement) { submit = candidate; break; }
       await waitFor(500);
     }
