@@ -44,6 +44,9 @@ describe('twitter search command', () => {
                                                                         core: {
                                                                             screen_name: 'alice',
                                                                         },
+                                                                        legacy: {
+                                                                            description: 'Search author bio',
+                                                                        },
                                                                     },
                                                                 },
                                                             },
@@ -68,6 +71,7 @@ describe('twitter search command', () => {
             {
                 id: '1',
                 author: 'alice',
+                bio: 'Search author bio',
                 text: 'hello world',
                 created_at: 'Thu Mar 26 10:30:00 +0000 2026',
                 likes: 7,
@@ -75,6 +79,8 @@ describe('twitter search command', () => {
                 url: 'https://x.com/i/status/1',
                 has_media: false,
                 media_urls: [],
+                card: null,
+                quoted_tweet: null,
             },
         ]);
         expect(page.getCookies).toHaveBeenCalledWith({ url: 'https://x.com' });

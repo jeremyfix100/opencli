@@ -155,6 +155,16 @@ export function unwrapBrowserResult(value) {
     return value;
 }
 
+function isEmptyObject(value) {
+    return value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 0;
+}
+
+export function looksLikePrivateTwitterTimeline(data) {
+    const result = data?.data?.user?.result;
+    if (!result || typeof result !== 'object') return false;
+    return Boolean(isEmptyObject(result.timeline) || isEmptyObject(result.timeline_v2?.timeline));
+}
+
 export function normalizeTwitterGraphqlPayload(value) {
     const unwrapped = unwrapBrowserResult(value);
     if (unwrapped?.data && typeof unwrapped.data === 'object') return unwrapped;
@@ -288,6 +298,148 @@ export function extractMedia(legacy) {
     }
     return { has_media: urls.length > 0, media_urls: urls };
 }
+
+/**
+ * Extract the link-preview card from a tweet's GraphQL response.
+ *
+ * Reads `tweet.card.legacy.{name, binding_values}` plus the expanded URL from
+ * the `tweet.legacy.entities.urls` entry matching the card's t.co URL.
+ * `binding_values` is an array of `{ key, value: { type, string_value, image_value: { url } } }`.
+ *
+ * Returns `null` when:
+ *   - the tweet has no card, OR
+ *   - the card is structurally empty (no landing URL AND no title/description),
+ *     which would be useless to downstream renderers.
+ *
+ * Otherwise returns a partial card object — missing fields are simply omitted
+ * (no `undefined` values in the output) so JSON consumers see a clean shape.
+ */
+export function extractCard(tweet) {
+    const cardLegacy = tweet?.card?.legacy;
+    if (!cardLegacy) return null;
+    const bindings = Array.isArray(cardLegacy.binding_values) ? cardLegacy.binding_values : [];
+    const byKey = new Map();
+    for (const b of bindings) {
+        if (b && typeof b.key === 'string') byKey.set(b.key, b.value);
+    }
+    const str = (key) => {
+        const v = byKey.get(key);
+        return typeof v?.string_value === 'string' && v.string_value.length > 0 ? v.string_value : undefined;
+    };
+    const img = (key) => {
+        const v = byKey.get(key);
+        const u = v?.image_value?.url;
+        return typeof u === 'string' && u.length > 0 ? u : undefined;
+    };
+    const title = str('title');
+    const description = str('description');
+    const domainBinding = str('domain');
+    const cardUrlBinding = str('card_url');
+    const image_url = img('thumbnail_image_large') || img('photo_image_full_size_large') || img('summary_photo_image_large');
+    const urlEntities = Array.isArray(tweet?.legacy?.entities?.urls)
+        ? tweet.legacy.entities.urls
+        : [];
+    const matchingEntity = cardUrlBinding
+        ? urlEntities.find((entity) => entity?.url === cardUrlBinding || entity?.expanded_url === cardUrlBinding)
+        : undefined;
+    const matchedExpandedUrl = matchingEntity?.expanded_url;
+    const url = (typeof matchedExpandedUrl === 'string' && matchedExpandedUrl.length > 0)
+        ? matchedExpandedUrl
+        : cardUrlBinding;
+    let domain = domainBinding;
+    if (!domain && url) {
+        try { domain = new URL(url).hostname; }
+        catch { /* malformed url — domain stays undefined */ }
+    }
+    if (!url && !title && !description) return null;
+    const out = { name: cardLegacy.name };
+    if (title) out.title = title;
+    if (description) out.description = description;
+    if (image_url) out.image_url = image_url;
+    if (url) out.url = url;
+    if (domain) out.domain = domain;
+    return out;
+}
+
+/**
+ * Extract the quoted tweet from a tweet's GraphQL response.
+ *
+ * A quote tweet is a tweet that embeds and comments on another tweet (distinct
+ * from a reply or retweet). The author writes new commentary and the embedded
+ * tweet renders as a card-like preview under the new tweet.
+ *
+ * GraphQL surfaces this as `tweet.quoted_status_result.result`, which contains
+ * the same `legacy / core / card / note_tweet` shape as the outer tweet — so
+ * we reuse `extractMedia` / `extractCard` on the nested object. Detection is
+ * gated by `legacy.is_quote_status === true` (plus the presence of the nested
+ * result) so we don't return junk on plain replies that share field shapes.
+ *
+ * Returns `null` when:
+ *   - the tweet is not a quote, OR
+ *   - the nested `quoted_status_result.result` is missing/empty/tombstoned.
+ *
+ * Only goes ONE level deep — a quote-of-a-quote returns its level-1 quoted
+ * tweet without further nesting. Recursing would explode payload size on
+ * threads where every reply re-quotes the original.
+ *
+ * The output shape is a deliberately small subset of the main tweet shape
+ * (id/author/name/text/created_at/url + media + card). Consumers that need
+ * counts or full author bio of the quoted tweet can re-fetch the quoted id
+ * via `twitter thread <id>` — keeping this slim avoids ballooning every
+ * timeline/list/search response by 2-3x.
+ */
+export function extractQuotedTweet(tweet) {
+    const legacy = tweet?.legacy;
+    if (!legacy?.is_quote_status) return null;
+    const q = tweet?.quoted_status_result?.result
+        ?? tweet?.legacy?.quoted_status_result?.result;
+    // `result` can be a tombstone (`__typename: 'TweetTombstone'`) or
+    // `'TweetUnavailable'` when the quoted tweet was deleted / privacy-restricted.
+    if (!q) return null;
+    // Nested `tweet` wrapper appears on TweetWithVisibilityResults — same
+    // shim that callers already do at the top level (`tw.tweet || tw`).
+    const qTw = q.tweet || q;
+    if (!qTw || typeof qTw !== 'object') return null;
+    const qLegacy = qTw.legacy && typeof qTw.legacy === 'object' ? qTw.legacy : {};
+    // `rest_id` is required — tombstoned / unavailable wrappers have neither
+    // rest_id nor legacy. Don't fall back to outer `legacy.quoted_status_id_str`:
+    // the id alone can't substitute for missing content (author/text/media all
+    // empty), so emitting a stub object would mislead downstream renderers into
+    // drawing an empty "quoted tweet" preview.
+    if (typeof qTw.rest_id !== 'string' || !qTw.rest_id.trim()) return null;
+    const qUser = qTw.core?.user_results?.result;
+    const qLegacyScreenName = qUser?.legacy?.screen_name;
+    const qCoreScreenName = qUser?.core?.screen_name;
+    const qScreenName = typeof qLegacyScreenName === 'string' && qLegacyScreenName.trim()
+        ? qLegacyScreenName.trim()
+        : (typeof qCoreScreenName === 'string' && qCoreScreenName.trim() ? qCoreScreenName.trim() : '');
+    if (!SCREEN_NAME_PATTERN.test(qScreenName)) return null;
+    const qLegacyDisplayName = qUser?.legacy?.name;
+    const qCoreDisplayName = qUser?.core?.name;
+    const qDisplayName = typeof qLegacyDisplayName === 'string'
+        ? qLegacyDisplayName
+        : (typeof qCoreDisplayName === 'string' ? qCoreDisplayName : '');
+    const qNoteText = qTw.note_tweet?.note_tweet_results?.result?.text;
+    const qText = (typeof qNoteText === 'string' && qNoteText.length > 0)
+        ? qNoteText
+        : (typeof qLegacy.full_text === 'string' ? qLegacy.full_text : '');
+    const qMedia = extractMedia(qLegacy);
+    const qCard = extractCard(qTw);
+    if (!qText && !qMedia.has_media && !qCard) return null;
+    const out = {
+        id: qTw.rest_id,
+        author: qScreenName,
+        name: qDisplayName,
+        text: qText,
+        created_at: typeof qLegacy.created_at === 'string' ? qLegacy.created_at : '',
+        url: `https://x.com/${qScreenName}/status/${qTw.rest_id}`,
+        has_media: qMedia.has_media,
+        media_urls: qMedia.media_urls,
+    };
+    if (qCard) out.card = qCard;
+    return out;
+}
+
 export const __test__ = {
     sanitizeQueryId,
     sanitizeTwitterOperationMetadata,
@@ -295,6 +447,9 @@ export const __test__ = {
     normalizeTwitterGraphqlPayload,
     normalizeTwitterScreenName,
     extractMedia,
+    extractCard,
+    extractQuotedTweet,
     parseTweetUrl,
     buildTwitterArticleScopeSource,
+    looksLikePrivateTwitterTimeline,
 };

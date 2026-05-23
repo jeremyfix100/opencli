@@ -1,5 +1,302 @@
 [
   {
+    "site": "12306",
+    "name": "me",
+    "description": "Show the logged-in 12306 account summary. Sensitive fields (real name, email, mobile, birth date) are masked by default; pass --include-sensitive to opt in.",
+    "access": "read",
+    "domain": "kyfw.12306.cn",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "include-sensitive",
+        "type": "boolean",
+        "default": false,
+        "required": false,
+        "help": "Reveal unmasked real name / email / mobile / birth date. The 12306 ID-number mask is server-side and never decoded."
+      }
+    ],
+    "columns": [
+      "username",
+      "real_name",
+      "email",
+      "mobile",
+      "birth_date",
+      "sex",
+      "country",
+      "user_type",
+      "member",
+      "active"
+    ],
+    "type": "js",
+    "modulePath": "12306/me.js",
+    "sourceFile": "12306/me.js",
+    "navigateBefore": "https://kyfw.12306.cn"
+  },
+  {
+    "site": "12306",
+    "name": "orders",
+    "description": "List in-progress 12306 orders (not yet ridden, refunded, or completed) for the logged-in user",
+    "access": "read",
+    "domain": "kyfw.12306.cn",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "include-sensitive",
+        "type": "boolean",
+        "default": false,
+        "required": false,
+        "help": "Reveal unmasked passenger names in order rows. Masked by default."
+      }
+    ],
+    "columns": [
+      "order_id",
+      "order_date",
+      "train_code",
+      "from_station",
+      "to_station",
+      "departure",
+      "passengers",
+      "status",
+      "amount"
+    ],
+    "type": "js",
+    "modulePath": "12306/orders.js",
+    "sourceFile": "12306/orders.js",
+    "navigateBefore": "https://kyfw.12306.cn"
+  },
+  {
+    "site": "12306",
+    "name": "passengers",
+    "description": "List the logged-in user's saved 12306 passengers. Sensitive fields are masked by default; pass --include-sensitive to opt in.",
+    "access": "read",
+    "domain": "kyfw.12306.cn",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20,
+        "required": false,
+        "help": "Max passengers to return (1-50)"
+      },
+      {
+        "name": "include-sensitive",
+        "type": "boolean",
+        "default": false,
+        "required": false,
+        "help": "Reveal unmasked real names and birth dates. The 12306 ID-number / mobile masks are server-side and never decoded."
+      }
+    ],
+    "columns": [
+      "name",
+      "sex",
+      "born_year",
+      "id_type",
+      "id_no",
+      "mobile",
+      "passenger_type",
+      "country"
+    ],
+    "type": "js",
+    "modulePath": "12306/passengers.js",
+    "sourceFile": "12306/passengers.js",
+    "navigateBefore": "https://kyfw.12306.cn"
+  },
+  {
+    "site": "12306",
+    "name": "price",
+    "description": "Look up 12306 ticket prices by seat class for one train on a given date and segment (anonymous, no login required)",
+    "access": "read",
+    "domain": "kyfw.12306.cn",
+    "strategy": "public",
+    "browser": false,
+    "args": [
+      {
+        "name": "train-no",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Internal train_no from `12306 trains` (e.g. 24000000G10L)"
+      },
+      {
+        "name": "from",
+        "type": "str",
+        "required": true,
+        "help": "Origin station (Chinese name, telecode, or pinyin) - must be a stop of this train"
+      },
+      {
+        "name": "to",
+        "type": "str",
+        "required": true,
+        "help": "Destination station - must be a stop of this train"
+      },
+      {
+        "name": "date",
+        "type": "str",
+        "required": true,
+        "help": "Departure date in YYYY-MM-DD"
+      },
+      {
+        "name": "seat-types",
+        "type": "str",
+        "default": "OM9PA1A3A4FWZ",
+        "required": false,
+        "help": "Seat-type letters to query (default covers the common classes). Examples: OM9 (二等/一等/商务), A1A3A4 (硬座/硬卧/软卧)."
+      }
+    ],
+    "columns": [
+      "seat_code",
+      "seat_name",
+      "price",
+      "currency"
+    ],
+    "type": "js",
+    "modulePath": "12306/price.js",
+    "sourceFile": "12306/price.js"
+  },
+  {
+    "site": "12306",
+    "name": "stations",
+    "description": "Search 12306 (China Railway) stations by Chinese name, telecode, or pinyin keyword",
+    "access": "read",
+    "domain": "kyfw.12306.cn",
+    "strategy": "public",
+    "browser": false,
+    "args": [
+      {
+        "name": "keyword",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Chinese substring (上海), telecode (AOH), or pinyin (shanghai)"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20,
+        "required": false,
+        "help": "Maximum results (1-50)"
+      }
+    ],
+    "columns": [
+      "name",
+      "code",
+      "pinyin",
+      "abbr",
+      "city"
+    ],
+    "type": "js",
+    "modulePath": "12306/stations.js",
+    "sourceFile": "12306/stations.js"
+  },
+  {
+    "site": "12306",
+    "name": "train",
+    "description": "List every station a 12306 train calls at, with arrival / departure / stopover time (anonymous, no login required)",
+    "access": "read",
+    "domain": "kyfw.12306.cn",
+    "strategy": "public",
+    "browser": false,
+    "args": [
+      {
+        "name": "train-no",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Internal train_no from `12306 trains` (e.g. 24000000G10L), not the public code (G1)"
+      },
+      {
+        "name": "from",
+        "type": "str",
+        "required": true,
+        "help": "Origin station for the segment: Chinese name, telecode, or pinyin"
+      },
+      {
+        "name": "to",
+        "type": "str",
+        "required": true,
+        "help": "Destination station for the segment"
+      },
+      {
+        "name": "date",
+        "type": "str",
+        "required": true,
+        "help": "Departure date in YYYY-MM-DD"
+      }
+    ],
+    "columns": [
+      "station_no",
+      "station_name",
+      "arrive_time",
+      "start_time",
+      "stopover_time"
+    ],
+    "type": "js",
+    "modulePath": "12306/train.js",
+    "sourceFile": "12306/train.js"
+  },
+  {
+    "site": "12306",
+    "name": "trains",
+    "description": "List trains between two 12306 stations on a given date (anonymous, no login required)",
+    "access": "read",
+    "domain": "kyfw.12306.cn",
+    "strategy": "public",
+    "browser": false,
+    "args": [
+      {
+        "name": "from",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Origin station: Chinese name (北京), telecode (BJP), or pinyin (beijing)"
+      },
+      {
+        "name": "to",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Destination station: same forms as <from>"
+      },
+      {
+        "name": "date",
+        "type": "str",
+        "required": true,
+        "help": "Departure date in YYYY-MM-DD"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 50,
+        "required": false,
+        "help": "Maximum rows (1-100)"
+      }
+    ],
+    "columns": [
+      "code",
+      "from_station",
+      "to_station",
+      "start_time",
+      "arrive_time",
+      "duration",
+      "available",
+      "business_seat",
+      "first_seat",
+      "second_seat",
+      "soft_sleeper",
+      "hard_sleeper",
+      "hard_seat",
+      "no_seat",
+      "train_no"
+    ],
+    "type": "js",
+    "modulePath": "12306/trains.js",
+    "sourceFile": "12306/trains.js"
+  },
+  {
     "site": "1688",
     "name": "assets",
     "description": "列出 1688 商品页可提取的图片/视频素材",
@@ -1902,7 +2199,7 @@
         "type": "int",
         "default": 10,
         "required": false,
-        "help": "Number of near-the-money strikes per type"
+        "help": "Number of near-the-money strikes per type (1-100)"
       }
     ],
     "columns": [
@@ -2081,8 +2378,56 @@
   },
   {
     "site": "bilibili",
+    "name": "comment",
+    "description": "在 B站视频下发表评论或回复（官方 API，需登录；消息里的 @用户 会被解析为真实提及）",
+    "access": "write",
+    "domain": "www.bilibili.com",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "bvid",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Video BV ID / URL / b23.tv short link"
+      },
+      {
+        "name": "message",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Comment text. Any @username in it is resolved to a real mention"
+      },
+      {
+        "name": "parent",
+        "type": "int",
+        "required": false,
+        "help": "top-level/root rpid to reply under (omit for a top-level comment)"
+      },
+      {
+        "name": "execute",
+        "type": "boolean",
+        "required": false,
+        "help": "Actually post the comment. Without it the command refuses to write."
+      }
+    ],
+    "columns": [
+      "rpid",
+      "bvid",
+      "oid",
+      "message",
+      "url"
+    ],
+    "type": "js",
+    "modulePath": "bilibili/comment.js",
+    "sourceFile": "bilibili/comment.js",
+    "navigateBefore": "https://www.bilibili.com"
+  },
+  {
+    "site": "bilibili",
     "name": "comments",
-    "description": "获取 B站视频评论（使用官方 API + WBI 签名）",
+    "description": "获取 B站视频评论（官方 API；用 --parent <rpid> 读取某条评论下的「楼中楼」回复）",
     "access": "read",
     "domain": "www.bilibili.com",
     "strategy": "cookie",
@@ -2096,6 +2441,12 @@
         "help": "Video BV ID (e.g. BV1WtAGzYEBm)"
       },
       {
+        "name": "parent",
+        "type": "int",
+        "required": false,
+        "help": "rpid of a comment — fetch the replies under it instead of top-level comments"
+      },
+      {
         "name": "limit",
         "type": "int",
         "default": 20,
@@ -2105,6 +2456,7 @@
     ],
     "columns": [
       "rank",
+      "rpid",
       "author",
       "text",
       "likes",
@@ -2516,6 +2868,7 @@
     "name": "subtitle",
     "description": "获取 Bilibili 视频的字幕",
     "access": "read",
+    "domain": "www.bilibili.com",
     "strategy": "cookie",
     "browser": true,
     "args": [
@@ -2542,7 +2895,33 @@
     "type": "js",
     "modulePath": "bilibili/subtitle.js",
     "sourceFile": "bilibili/subtitle.js",
-    "navigateBefore": true
+    "navigateBefore": "https://www.bilibili.com"
+  },
+  {
+    "site": "bilibili",
+    "name": "summary",
+    "description": "获取 B站视频的官方 AI 总结（视频页「AI总结」同款，含分段大纲与时间戳）",
+    "access": "read",
+    "domain": "www.bilibili.com",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "bvid",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Video BV ID / URL / b23.tv short link"
+      }
+    ],
+    "columns": [
+      "time",
+      "content"
+    ],
+    "type": "js",
+    "modulePath": "bilibili/summary.js",
+    "sourceFile": "bilibili/summary.js",
+    "navigateBefore": "https://www.bilibili.com"
   },
   {
     "site": "bilibili",
@@ -3520,6 +3899,101 @@
     "type": "js",
     "modulePath": "bluesky/user.js",
     "sourceFile": "bluesky/user.js"
+  },
+  {
+    "site": "booking",
+    "name": "search",
+    "description": "Search Booking.com hotels by destination and dates (server-rendered card scrape).",
+    "access": "read",
+    "example": "opencli booking search Tokyo --checkin 2026-06-15 --checkout 2026-06-17 -f yaml",
+    "domain": "www.booking.com",
+    "strategy": "public",
+    "browser": true,
+    "args": [
+      {
+        "name": "destination",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Destination keyword (city, district, or hotel name)"
+      },
+      {
+        "name": "checkin",
+        "type": "str",
+        "required": true,
+        "help": "Check-in date YYYY-MM-DD"
+      },
+      {
+        "name": "checkout",
+        "type": "str",
+        "required": true,
+        "help": "Check-out date YYYY-MM-DD"
+      },
+      {
+        "name": "adults",
+        "type": "int",
+        "default": 2,
+        "required": false,
+        "help": "Number of adults (1-30)"
+      },
+      {
+        "name": "rooms",
+        "type": "int",
+        "default": 1,
+        "required": false,
+        "help": "Number of rooms (1-30)"
+      },
+      {
+        "name": "children",
+        "type": "int",
+        "default": 0,
+        "required": false,
+        "help": "Number of children (0-10)"
+      },
+      {
+        "name": "currency",
+        "type": "str",
+        "required": false,
+        "help": "Force result currency (e.g. USD, JPY, CNY)"
+      },
+      {
+        "name": "lang",
+        "type": "str",
+        "required": false,
+        "help": "Force result language (e.g. en-us, zh-cn, ja)"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 25,
+        "required": false,
+        "help": "Max rows to return (1-100; Booking pages 25 per request)"
+      },
+      {
+        "name": "offset",
+        "type": "int",
+        "default": 0,
+        "required": false,
+        "help": "Result offset for pagination (multiple of 25)"
+      }
+    ],
+    "columns": [
+      "rank",
+      "name",
+      "country",
+      "slug",
+      "star_rating",
+      "review_score",
+      "review_count",
+      "price_amount",
+      "price_currency",
+      "distance",
+      "recommended_room",
+      "url"
+    ],
+    "type": "js",
+    "modulePath": "booking/search.js",
+    "sourceFile": "booking/search.js"
   },
   {
     "site": "boss",
@@ -4900,6 +5374,143 @@
     "navigateBefore": true
   },
   {
+    "site": "chess",
+    "name": "analyze",
+    "description": "Open a Chess.com game in the browser analysis board",
+    "access": "read",
+    "domain": "www.chess.com",
+    "strategy": "ui",
+    "browser": true,
+    "args": [
+      {
+        "name": "game-url",
+        "type": "string",
+        "required": true,
+        "positional": true,
+        "help": "Full game URL, e.g. https://www.chess.com/game/live/168842570216"
+      }
+    ],
+    "columns": [
+      "kind",
+      "game_id",
+      "analysis_url"
+    ],
+    "type": "js",
+    "modulePath": "chess/analyze.js",
+    "sourceFile": "chess/analyze.js",
+    "navigateBefore": false
+  },
+  {
+    "site": "chess",
+    "name": "game",
+    "description": "Chess.com single-game detail (white, black, result, ECO, time control) by full game URL",
+    "access": "read",
+    "domain": "www.chess.com",
+    "strategy": "public",
+    "browser": false,
+    "args": [
+      {
+        "name": "game-url",
+        "type": "string",
+        "required": true,
+        "positional": true,
+        "help": "Full game URL, e.g. https://www.chess.com/game/live/168842570216"
+      }
+    ],
+    "columns": [
+      "kind",
+      "game_id",
+      "date",
+      "white",
+      "white_rating",
+      "black",
+      "black_rating",
+      "result",
+      "winner_color",
+      "termination",
+      "eco",
+      "time_control",
+      "rated",
+      "ply_count",
+      "url"
+    ],
+    "type": "js",
+    "modulePath": "chess/game.js",
+    "sourceFile": "chess/game.js"
+  },
+  {
+    "site": "chess",
+    "name": "games",
+    "description": "Chess.com recent games for a player, newest first",
+    "access": "read",
+    "domain": "api.chess.com",
+    "strategy": "public",
+    "browser": false,
+    "args": [
+      {
+        "name": "username",
+        "type": "string",
+        "required": true,
+        "positional": true,
+        "help": "Chess.com username"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 10,
+        "required": false,
+        "help": "Number of recent games (1-100)"
+      }
+    ],
+    "columns": [
+      "date",
+      "time_class",
+      "rated",
+      "my_color",
+      "my_rating",
+      "my_result",
+      "opponent",
+      "opponent_rating",
+      "accuracy_white",
+      "accuracy_black",
+      "eco",
+      "opening_name",
+      "url"
+    ],
+    "type": "js",
+    "modulePath": "chess/games.js",
+    "sourceFile": "chess/games.js"
+  },
+  {
+    "site": "chess",
+    "name": "stats",
+    "description": "Chess.com player ratings + win/loss record across game kinds",
+    "access": "read",
+    "domain": "api.chess.com",
+    "strategy": "public",
+    "browser": false,
+    "args": [
+      {
+        "name": "username",
+        "type": "string",
+        "required": true,
+        "positional": true,
+        "help": "Chess.com username (case-insensitive)"
+      }
+    ],
+    "columns": [
+      "kind",
+      "rating_current",
+      "rating_best",
+      "wins",
+      "losses",
+      "draws"
+    ],
+    "type": "js",
+    "modulePath": "chess/stats.js",
+    "sourceFile": "chess/stats.js"
+  },
+  {
     "site": "claude",
     "name": "ask",
     "description": "Send a prompt to Claude and get the response",
@@ -5780,6 +6391,208 @@
     "type": "js",
     "modulePath": "coingecko/trending.js",
     "sourceFile": "coingecko/trending.js"
+  },
+  {
+    "site": "confluence",
+    "name": "create",
+    "description": "Create a Confluence page from Markdown or storage XHTML",
+    "access": "write",
+    "domain": "atlassian.net",
+    "strategy": "public",
+    "browser": false,
+    "args": [
+      {
+        "name": "space",
+        "type": "string",
+        "required": true,
+        "help": "Cloud space id, or Data Center space key"
+      },
+      {
+        "name": "title",
+        "type": "string",
+        "required": true,
+        "help": "Page title"
+      },
+      {
+        "name": "file",
+        "type": "string",
+        "required": true,
+        "help": "Markdown file path"
+      },
+      {
+        "name": "parent",
+        "type": "string",
+        "required": false,
+        "help": "Optional parent page id"
+      },
+      {
+        "name": "representation",
+        "type": "string",
+        "default": "markdown",
+        "required": false,
+        "help": "Input file format",
+        "choices": [
+          "markdown",
+          "storage"
+        ]
+      },
+      {
+        "name": "execute",
+        "type": "boolean",
+        "required": false,
+        "help": "Actually create the remote page"
+      }
+    ],
+    "columns": [
+      "status",
+      "id",
+      "title",
+      "spaceId",
+      "spaceKey",
+      "version",
+      "url"
+    ],
+    "type": "js",
+    "modulePath": "confluence/create.js",
+    "sourceFile": "confluence/create.js"
+  },
+  {
+    "site": "confluence",
+    "name": "page",
+    "description": "Confluence page by id with storage and Markdown body",
+    "access": "read",
+    "domain": "atlassian.net",
+    "strategy": "public",
+    "browser": false,
+    "args": [
+      {
+        "name": "id",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Confluence page id"
+      }
+    ],
+    "columns": [
+      "id",
+      "title",
+      "status",
+      "spaceId",
+      "spaceKey",
+      "version",
+      "url"
+    ],
+    "type": "js",
+    "modulePath": "confluence/page.js",
+    "sourceFile": "confluence/page.js"
+  },
+  {
+    "site": "confluence",
+    "name": "search",
+    "description": "Search Confluence content with CQL",
+    "access": "read",
+    "domain": "atlassian.net",
+    "strategy": "public",
+    "browser": false,
+    "args": [
+      {
+        "name": "cql",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "CQL query, e.g. \"type = page and title ~ \\\"RCA\\\"\""
+      },
+      {
+        "name": "space",
+        "type": "string",
+        "required": false,
+        "help": "Limit search to a Confluence space key"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20,
+        "required": false,
+        "help": "Max results to return (1-100)"
+      }
+    ],
+    "columns": [
+      "id",
+      "title",
+      "type",
+      "spaceKey",
+      "status",
+      "lastModified",
+      "url"
+    ],
+    "type": "js",
+    "modulePath": "confluence/search.js",
+    "sourceFile": "confluence/search.js"
+  },
+  {
+    "site": "confluence",
+    "name": "update",
+    "description": "Update a Confluence page body from Markdown or storage XHTML",
+    "access": "write",
+    "domain": "atlassian.net",
+    "strategy": "public",
+    "browser": false,
+    "args": [
+      {
+        "name": "id",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Confluence page id"
+      },
+      {
+        "name": "file",
+        "type": "string",
+        "required": true,
+        "help": "Markdown file path"
+      },
+      {
+        "name": "title",
+        "type": "string",
+        "required": false,
+        "help": "Optional replacement title; defaults to current title"
+      },
+      {
+        "name": "version-message",
+        "type": "string",
+        "required": false,
+        "help": "Confluence version message"
+      },
+      {
+        "name": "representation",
+        "type": "string",
+        "default": "markdown",
+        "required": false,
+        "help": "Input file format",
+        "choices": [
+          "markdown",
+          "storage"
+        ]
+      },
+      {
+        "name": "execute",
+        "type": "boolean",
+        "required": false,
+        "help": "Actually update the remote page"
+      }
+    ],
+    "columns": [
+      "status",
+      "id",
+      "title",
+      "spaceId",
+      "spaceKey",
+      "version",
+      "url"
+    ],
+    "type": "js",
+    "modulePath": "confluence/update.js",
+    "sourceFile": "confluence/update.js"
   },
   {
     "site": "coupang",
@@ -8469,7 +9282,7 @@
         "type": "str",
         "required": true,
         "positional": true,
-        "help": "search=关键词搜索 suggest=AI推荐 hot=热点词",
+        "help": "search=关键词搜索 (--keyword 必填), suggest=AI推荐 (--cover 必填), hot=热点词 (--keyword 可选)",
         "choices": [
           "search",
           "suggest",
@@ -8481,14 +9294,14 @@
         "type": "str",
         "default": "",
         "required": false,
-        "help": "搜索关键词（search/hot 使用）"
+        "help": "搜索关键词. search 必填; hot 可选; suggest 不使用 (传 --cover)"
       },
       {
         "name": "cover",
         "type": "str",
         "default": "",
         "required": false,
-        "help": "封面 URI（suggest 使用）"
+        "help": "封面 URI (cover_uri). suggest 必填; 其它 action 不使用"
       },
       {
         "name": "limit",
@@ -10228,6 +11041,277 @@
     "sourceFile": "gemini/new.js",
     "navigateBefore": false,
     "siteSession": "persistent"
+  },
+  {
+    "site": "geogebra",
+    "name": "add-circle",
+    "description": "Create a circle by center+radius or center+point",
+    "access": "write",
+    "example": "opencli geogebra add-circle --center A --radius 3",
+    "domain": "www.geogebra.org",
+    "strategy": "public",
+    "browser": true,
+    "args": [
+      {
+        "name": "center",
+        "type": "str",
+        "required": true,
+        "help": "Center point label (e.g. A)"
+      },
+      {
+        "name": "radius",
+        "type": "str",
+        "required": false,
+        "help": "Radius value (number) or a point label on the circle"
+      },
+      {
+        "name": "point",
+        "type": "str",
+        "required": false,
+        "help": "Alternative: a point label on the circle (use instead of --radius for Circle(center,point))"
+      }
+    ],
+    "columns": [
+      "label",
+      "center",
+      "radius"
+    ],
+    "type": "js",
+    "modulePath": "geogebra/add-circle.js",
+    "sourceFile": "geogebra/add-circle.js",
+    "navigateBefore": false
+  },
+  {
+    "site": "geogebra",
+    "name": "add-line",
+    "description": "Create a line through two points or a segment between two points",
+    "access": "write",
+    "example": "opencli geogebra add-line --points A,B --type segment",
+    "domain": "www.geogebra.org",
+    "strategy": "public",
+    "browser": true,
+    "args": [
+      {
+        "name": "points",
+        "type": "str",
+        "required": true,
+        "help": "Two point labels separated by comma (e.g. \"A,B\")"
+      },
+      {
+        "name": "type",
+        "type": "str",
+        "default": "line",
+        "required": false,
+        "help": "Type: line, segment, or ray (default: line)",
+        "choices": [
+          "line",
+          "segment",
+          "ray"
+        ]
+      }
+    ],
+    "columns": [
+      "label",
+      "type",
+      "points"
+    ],
+    "type": "js",
+    "modulePath": "geogebra/add-line.js",
+    "sourceFile": "geogebra/add-line.js",
+    "navigateBefore": false
+  },
+  {
+    "site": "geogebra",
+    "name": "add-point",
+    "description": "Create a point with given label and coordinates",
+    "access": "write",
+    "example": "opencli geogebra add-point --name A --coords 1,2",
+    "domain": "www.geogebra.org",
+    "strategy": "public",
+    "browser": true,
+    "args": [
+      {
+        "name": "name",
+        "type": "str",
+        "required": true,
+        "help": "Point label (e.g. A, B, P1)"
+      },
+      {
+        "name": "coords",
+        "type": "str",
+        "required": true,
+        "help": "Coordinates as x,y (e.g. \"1,2\")"
+      }
+    ],
+    "columns": [
+      "name",
+      "x",
+      "y"
+    ],
+    "type": "js",
+    "modulePath": "geogebra/add-point.js",
+    "sourceFile": "geogebra/add-point.js",
+    "navigateBefore": false
+  },
+  {
+    "site": "geogebra",
+    "name": "add-polygon",
+    "description": "Create a polygon from a list of point labels",
+    "access": "write",
+    "example": "opencli geogebra add-polygon --points A,B,C",
+    "domain": "www.geogebra.org",
+    "strategy": "public",
+    "browser": true,
+    "args": [
+      {
+        "name": "points",
+        "type": "str",
+        "required": true,
+        "help": "Comma-separated point labels (e.g. \"A,B,C\" or \"A,B,C,D\")"
+      }
+    ],
+    "columns": [
+      "label",
+      "vertices"
+    ],
+    "type": "js",
+    "modulePath": "geogebra/add-polygon.js",
+    "sourceFile": "geogebra/add-polygon.js",
+    "navigateBefore": false
+  },
+  {
+    "site": "geogebra",
+    "name": "eval",
+    "description": "Execute one or more GeoGebra command strings (semicolon-separated)",
+    "access": "write",
+    "example": "opencli geogebra eval \"A=(0,0);B=(4,0);c=Circle(A,B);d=Circle(B,A);C=Intersect(c,d,1);Polygon(A,B,C)\"",
+    "domain": "www.geogebra.org",
+    "strategy": "public",
+    "browser": true,
+    "args": [
+      {
+        "name": "command",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "GeoGebra command string (use ; to chain multiple commands)"
+      }
+    ],
+    "columns": [
+      "command",
+      "result"
+    ],
+    "type": "js",
+    "modulePath": "geogebra/eval.js",
+    "sourceFile": "geogebra/eval.js",
+    "navigateBefore": false
+  },
+  {
+    "site": "geogebra",
+    "name": "hexagon",
+    "description": "Draw a regular hexagon centered at the origin",
+    "access": "write",
+    "example": "opencli geogebra hexagon --size 3",
+    "domain": "www.geogebra.org",
+    "strategy": "public",
+    "browser": true,
+    "args": [
+      {
+        "name": "size",
+        "type": "str",
+        "default": "2",
+        "required": false,
+        "help": "Radius of the hexagon (default: 2)"
+      }
+    ],
+    "columns": [
+      "step",
+      "result"
+    ],
+    "type": "js",
+    "modulePath": "geogebra/hexagon.js",
+    "sourceFile": "geogebra/hexagon.js",
+    "navigateBefore": false
+  },
+  {
+    "site": "geogebra",
+    "name": "info",
+    "description": "Get detailed properties of a GeoGebra object",
+    "access": "read",
+    "example": "opencli geogebra info --name A",
+    "domain": "www.geogebra.org",
+    "strategy": "public",
+    "browser": true,
+    "args": [
+      {
+        "name": "name",
+        "type": "str",
+        "required": true,
+        "help": "Object label (e.g. A, c1, poly1)"
+      }
+    ],
+    "columns": [
+      "property",
+      "value"
+    ],
+    "type": "js",
+    "modulePath": "geogebra/info.js",
+    "sourceFile": "geogebra/info.js",
+    "navigateBefore": false
+  },
+  {
+    "site": "geogebra",
+    "name": "list",
+    "description": "List all geometric objects on the GeoGebra canvas",
+    "access": "read",
+    "domain": "www.geogebra.org",
+    "strategy": "public",
+    "browser": true,
+    "args": [
+      {
+        "name": "type",
+        "type": "str",
+        "required": false,
+        "help": "Filter by object type (e.g. \"point\", \"line\", \"circle\")"
+      }
+    ],
+    "columns": [
+      "name",
+      "type",
+      "value",
+      "visible"
+    ],
+    "type": "js",
+    "modulePath": "geogebra/list.js",
+    "sourceFile": "geogebra/list.js",
+    "navigateBefore": false
+  },
+  {
+    "site": "geogebra",
+    "name": "triangle",
+    "description": "Draw an equilateral triangle from a horizontal base segment",
+    "access": "write",
+    "example": "opencli geogebra triangle --size 4",
+    "domain": "www.geogebra.org",
+    "strategy": "public",
+    "browser": true,
+    "args": [
+      {
+        "name": "size",
+        "type": "str",
+        "default": "2",
+        "required": false,
+        "help": "Side length of the triangle (default: 2)"
+      }
+    ],
+    "columns": [
+      "step",
+      "result"
+    ],
+    "type": "js",
+    "modulePath": "geogebra/triangle.js",
+    "sourceFile": "geogebra/triangle.js",
+    "navigateBefore": false
   },
   {
     "site": "gitee",
@@ -13696,6 +14780,171 @@
     "navigateBefore": "https://jimeng.jianying.com"
   },
   {
+    "site": "jira",
+    "name": "attachments",
+    "description": "Jira issue attachment metadata",
+    "access": "read",
+    "domain": "atlassian.net",
+    "strategy": "public",
+    "browser": false,
+    "args": [
+      {
+        "name": "key",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Jira issue key, e.g. PROJ-123"
+      }
+    ],
+    "columns": [
+      "id",
+      "filename",
+      "mimeType",
+      "size",
+      "url"
+    ],
+    "type": "js",
+    "modulePath": "jira/attachments.js",
+    "sourceFile": "jira/attachments.js"
+  },
+  {
+    "site": "jira",
+    "name": "comments",
+    "description": "Jira issue comments as Markdown",
+    "access": "read",
+    "domain": "atlassian.net",
+    "strategy": "public",
+    "browser": false,
+    "args": [
+      {
+        "name": "key",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Jira issue key, e.g. PROJ-123"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 50,
+        "required": false,
+        "help": "Max comments to return (1-100)"
+      }
+    ],
+    "columns": [
+      "id",
+      "author",
+      "created",
+      "updated",
+      "markdown"
+    ],
+    "type": "js",
+    "modulePath": "jira/comments.js",
+    "sourceFile": "jira/comments.js"
+  },
+  {
+    "site": "jira",
+    "name": "issue",
+    "description": "Jira issue detail normalized for agents (description, comments, attachments, links)",
+    "access": "read",
+    "domain": "atlassian.net",
+    "strategy": "public",
+    "browser": false,
+    "args": [
+      {
+        "name": "key",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Jira issue key, e.g. PROJ-123"
+      },
+      {
+        "name": "comments-limit",
+        "type": "int",
+        "default": 100,
+        "required": false,
+        "help": "Max comments to include (1-100)"
+      }
+    ],
+    "columns": [
+      "key",
+      "summary",
+      "issueType",
+      "status",
+      "priority",
+      "assignee",
+      "updated",
+      "url"
+    ],
+    "type": "js",
+    "modulePath": "jira/issue.js",
+    "sourceFile": "jira/issue.js"
+  },
+  {
+    "site": "jira",
+    "name": "links",
+    "description": "Jira issue links",
+    "access": "read",
+    "domain": "atlassian.net",
+    "strategy": "public",
+    "browser": false,
+    "args": [
+      {
+        "name": "key",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Jira issue key, e.g. PROJ-123"
+      }
+    ],
+    "columns": [
+      "key",
+      "type",
+      "direction"
+    ],
+    "type": "js",
+    "modulePath": "jira/links.js",
+    "sourceFile": "jira/links.js"
+  },
+  {
+    "site": "jira",
+    "name": "search",
+    "description": "Search Jira issues with JQL",
+    "access": "read",
+    "domain": "atlassian.net",
+    "strategy": "public",
+    "browser": false,
+    "args": [
+      {
+        "name": "jql",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "JQL query, e.g. \"project = PROJ order by updated desc\""
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20,
+        "required": false,
+        "help": "Max issues to return (1-100)"
+      }
+    ],
+    "columns": [
+      "key",
+      "summary",
+      "issueType",
+      "status",
+      "priority",
+      "assignee",
+      "updated",
+      "url"
+    ],
+    "type": "js",
+    "modulePath": "jira/search.js",
+    "sourceFile": "jira/search.js"
+  },
+  {
     "site": "ke",
     "name": "chengjiao",
     "description": "贝壳找房成交记录",
@@ -14426,6 +15675,411 @@
   },
   {
     "site": "linkedin",
+    "name": "connect",
+    "description": "Fail-closed LinkedIn connection request sender that verifies the exact profile before optionally sending a note",
+    "access": "write",
+    "domain": "www.linkedin.com",
+    "strategy": "ui",
+    "browser": true,
+    "args": [
+      {
+        "name": "profile-url",
+        "type": "string",
+        "required": true,
+        "positional": true,
+        "help": "Exact LinkedIn profile URL to open and verify"
+      },
+      {
+        "name": "expected-name",
+        "type": "string",
+        "required": true,
+        "help": "Expected visible profile name"
+      },
+      {
+        "name": "note",
+        "type": "string",
+        "default": "",
+        "required": false,
+        "help": "Optional connection note, max 300 chars"
+      },
+      {
+        "name": "send",
+        "type": "bool",
+        "default": false,
+        "required": false,
+        "help": "Actually click Send. Default is dry-run verification only."
+      }
+    ],
+    "columns": [
+      "status",
+      "recipient",
+      "reason",
+      "profile_url",
+      "note_chars",
+      "connectable",
+      "delivery_verified",
+      "matched_invitation_name",
+      "matched_invitation_url",
+      "actualValue",
+      "blockReason",
+      "expectedValue",
+      "observedUrl",
+      "safety"
+    ],
+    "type": "js",
+    "modulePath": "linkedin/connect.js",
+    "sourceFile": "linkedin/connect.js",
+    "navigateBefore": true
+  },
+  {
+    "site": "linkedin",
+    "name": "inbox",
+    "description": "List LinkedIn messaging inbox conversations and unread messages",
+    "access": "read",
+    "domain": "www.linkedin.com",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 40,
+        "required": false,
+        "help": "Maximum conversations to return (1-100)"
+      },
+      {
+        "name": "unread-only",
+        "type": "bool",
+        "default": false,
+        "required": false,
+        "help": "Return only conversations with unread messages"
+      }
+    ],
+    "columns": [
+      "rank",
+      "thread_url",
+      "thread_id",
+      "person_name",
+      "last_message_preview",
+      "unread",
+      "counterparty_type",
+      "category",
+      "timestamp"
+    ],
+    "type": "js",
+    "modulePath": "linkedin/inbox.js",
+    "sourceFile": "linkedin/inbox.js",
+    "navigateBefore": "https://www.linkedin.com"
+  },
+  {
+    "site": "linkedin",
+    "name": "people-search",
+    "description": "Search standard LinkedIn (not Sales Navigator) for people by keyword. Each invocation consumes against LinkedIn's monthly Commercial Use Limit on people search; throttle accordingly.",
+    "access": "read",
+    "domain": "www.linkedin.com",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "keywords",
+        "type": "string",
+        "required": true,
+        "positional": true,
+        "help": "People search keywords, e.g. \"site reliability engineer berlin\""
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 5,
+        "required": false,
+        "help": "Maximum people to return (1-10); each query counts toward LinkedIn's monthly CUL"
+      }
+    ],
+    "columns": [
+      "rank",
+      "name",
+      "headline",
+      "location",
+      "profile_url"
+    ],
+    "type": "js",
+    "modulePath": "linkedin/people-search.js",
+    "sourceFile": "linkedin/people-search.js",
+    "navigateBefore": "https://www.linkedin.com"
+  },
+  {
+    "site": "linkedin",
+    "name": "safe-send",
+    "description": "Fail-closed LinkedIn message sender that verifies exact thread, recipient, and latest message before filling/sending",
+    "access": "write",
+    "domain": "www.linkedin.com",
+    "strategy": "ui",
+    "browser": true,
+    "args": [
+      {
+        "name": "thread-url",
+        "type": "str",
+        "required": true,
+        "help": "Exact LinkedIn messaging thread URL to open and verify"
+      },
+      {
+        "name": "expected-name",
+        "type": "str",
+        "required": true,
+        "help": "Expected visible recipient name in the active thread header"
+      },
+      {
+        "name": "message",
+        "type": "str",
+        "required": true,
+        "help": "Message body to send or dry-run"
+      },
+      {
+        "name": "expected-last-text",
+        "type": "str",
+        "required": false,
+        "help": "Substring expected in the currently visible latest conversation context"
+      },
+      {
+        "name": "expected-last-hash",
+        "type": "str",
+        "required": false,
+        "help": "SHA-256 hash of expected latest visible message text"
+      },
+      {
+        "name": "send",
+        "type": "bool",
+        "default": false,
+        "required": false,
+        "help": "Actually click Send. Default is dry-run verification only."
+      },
+      {
+        "name": "screenshot",
+        "type": "bool",
+        "default": false,
+        "required": false,
+        "help": "Capture a screenshot during verification"
+      }
+    ],
+    "columns": [
+      "status",
+      "recipient",
+      "reason",
+      "thread_url",
+      "message_chars",
+      "screenshot"
+    ],
+    "type": "js",
+    "modulePath": "linkedin/safe-send.js",
+    "sourceFile": "linkedin/safe-send.js",
+    "navigateBefore": true
+  },
+  {
+    "site": "linkedin",
+    "name": "salesnav-inbox",
+    "description": "List LinkedIn Sales Navigator message conversations with API pagination",
+    "access": "read",
+    "domain": "www.linkedin.com",
+    "strategy": "ui",
+    "browser": true,
+    "args": [
+      {
+        "name": "limit",
+        "type": "number",
+        "default": 40,
+        "required": false,
+        "help": "Maximum conversations to return (1-500)"
+      },
+      {
+        "name": "max-pages",
+        "type": "number",
+        "default": 30,
+        "required": false,
+        "help": "Maximum Sales Navigator API pages to fetch"
+      },
+      {
+        "name": "unread-only",
+        "type": "bool",
+        "default": false,
+        "required": false,
+        "help": "Return only unread conversations"
+      }
+    ],
+    "columns": [
+      "rank",
+      "thread_id",
+      "thread_url",
+      "person_name",
+      "last_message_snippet",
+      "last_activity_time",
+      "unread",
+      "unread_count",
+      "total_message_count",
+      "archived",
+      "participants",
+      "next_page_starts_at"
+    ],
+    "type": "js",
+    "modulePath": "linkedin/salesnav-inbox.js",
+    "sourceFile": "linkedin/salesnav-inbox.js",
+    "navigateBefore": true
+  },
+  {
+    "site": "linkedin",
+    "name": "salesnav-message",
+    "description": "Send or dry-run a LinkedIn Sales Navigator InMail to a lead using the Sales Navigator messaging API",
+    "access": "write",
+    "domain": "www.linkedin.com",
+    "strategy": "ui",
+    "browser": true,
+    "args": [
+      {
+        "name": "recipient",
+        "type": "string",
+        "required": true,
+        "positional": true,
+        "help": "Sales Navigator lead URL, LinkedIn /in/ URL from salesnav-search, or urn:li:fs_salesProfile:(...)"
+      },
+      {
+        "name": "subject",
+        "type": "string",
+        "required": true,
+        "help": "InMail subject"
+      },
+      {
+        "name": "body",
+        "type": "string",
+        "required": true,
+        "help": "InMail body"
+      },
+      {
+        "name": "send",
+        "type": "bool",
+        "default": false,
+        "required": false,
+        "help": "Actually send the InMail. Default is dry-run validation only."
+      },
+      {
+        "name": "copy-to-crm",
+        "type": "bool",
+        "default": false,
+        "required": false,
+        "help": "Set Sales Navigator copyToCrm on the message request"
+      }
+    ],
+    "columns": [
+      "status",
+      "recipient",
+      "title",
+      "company",
+      "credits_remaining",
+      "credits_before",
+      "credits_after",
+      "sent_in_salesnav",
+      "message_chars",
+      "subject_chars",
+      "recipient_urn",
+      "degree",
+      "inmail_restriction",
+      "open_link"
+    ],
+    "type": "js",
+    "modulePath": "linkedin/salesnav-message.js",
+    "sourceFile": "linkedin/salesnav-message.js",
+    "navigateBefore": true
+  },
+  {
+    "site": "linkedin",
+    "name": "salesnav-search",
+    "description": "Search LinkedIn Sales Navigator for people leads by keyword",
+    "access": "read",
+    "domain": "www.linkedin.com",
+    "strategy": "ui",
+    "browser": true,
+    "args": [
+      {
+        "name": "keywords",
+        "type": "string",
+        "required": true,
+        "positional": true,
+        "help": "People search keywords, e.g. \"quality manager food manufacturing\""
+      },
+      {
+        "name": "limit",
+        "type": "number",
+        "default": 25,
+        "required": false,
+        "help": "Maximum leads to return (1-500, fetched 25 per request)"
+      }
+    ],
+    "columns": [
+      "rank",
+      "name",
+      "title",
+      "company",
+      "location",
+      "degree",
+      "profile_url",
+      "lead_url",
+      "recipient_urn"
+    ],
+    "type": "js",
+    "modulePath": "linkedin/salesnav-search.js",
+    "sourceFile": "linkedin/salesnav-search.js",
+    "navigateBefore": true
+  },
+  {
+    "site": "linkedin",
+    "name": "salesnav-thread",
+    "description": "Return full Sales Navigator message history for a thread id, Sales Navigator inbox URL, lead URL, recipient urn, or exact recipient name",
+    "access": "read",
+    "domain": "www.linkedin.com",
+    "strategy": "ui",
+    "browser": true,
+    "args": [
+      {
+        "name": "thread-or-recipient",
+        "type": "string",
+        "required": true,
+        "positional": true,
+        "help": "Sales Navigator inbox URL/thread id, Sales Navigator lead URL, recipient urn, or exact participant name"
+      },
+      {
+        "name": "limit",
+        "type": "number",
+        "default": 200,
+        "required": false,
+        "help": "Maximum messages to return (1-500)"
+      },
+      {
+        "name": "max-pages",
+        "type": "number",
+        "default": 30,
+        "required": false,
+        "help": "Maximum inbox pages to scan when resolving a recipient"
+      }
+    ],
+    "columns": [
+      "index",
+      "thread_id",
+      "thread_url",
+      "sender",
+      "text",
+      "timestamp",
+      "subject",
+      "message_id",
+      "sender_urn",
+      "delivered_at",
+      "type",
+      "total_message_count"
+    ],
+    "type": "js",
+    "modulePath": "linkedin/salesnav-thread.js",
+    "sourceFile": "linkedin/salesnav-thread.js",
+    "navigateBefore": true
+  },
+  {
+    "site": "linkedin",
     "name": "search",
     "description": "Search LinkedIn jobs",
     "access": "read",
@@ -14514,6 +16168,68 @@
   },
   {
     "site": "linkedin",
+    "name": "sent-invitations",
+    "description": "List pending LinkedIn sent invitations for CRM reconciliation",
+    "access": "read",
+    "domain": "www.linkedin.com",
+    "strategy": "ui",
+    "browser": true,
+    "args": [],
+    "columns": [
+      "rank",
+      "name",
+      "profile_url",
+      "invited_date_text"
+    ],
+    "type": "js",
+    "modulePath": "linkedin/sent-invitations.js",
+    "sourceFile": "linkedin/sent-invitations.js",
+    "navigateBefore": true
+  },
+  {
+    "site": "linkedin",
+    "name": "thread-snapshot",
+    "description": "Load a LinkedIn messaging thread, scroll for available history, and return a full context snapshot",
+    "access": "read",
+    "domain": "www.linkedin.com",
+    "strategy": "ui",
+    "browser": true,
+    "args": [
+      {
+        "name": "thread-url",
+        "type": "str",
+        "required": true,
+        "help": "Exact LinkedIn messaging thread URL to open and snapshot"
+      },
+      {
+        "name": "max-scrolls",
+        "type": "number",
+        "default": 30,
+        "required": false,
+        "help": "Maximum upward scroll attempts to load older messages"
+      },
+      {
+        "name": "json",
+        "type": "bool",
+        "default": false,
+        "required": false,
+        "help": "Return only JSON snapshot string in the snapshot_json field"
+      }
+    ],
+    "columns": [
+      "thread_url",
+      "recipient",
+      "message_count",
+      "latest_text",
+      "snapshot_json"
+    ],
+    "type": "js",
+    "modulePath": "linkedin/thread-snapshot.js",
+    "sourceFile": "linkedin/thread-snapshot.js",
+    "navigateBefore": true
+  },
+  {
+    "site": "linkedin",
     "name": "timeline",
     "description": "Read LinkedIn home timeline posts",
     "access": "read",
@@ -14543,6 +16259,112 @@
     "type": "js",
     "modulePath": "linkedin/timeline.js",
     "sourceFile": "linkedin/timeline.js",
+    "navigateBefore": "https://www.linkedin.com"
+  },
+  {
+    "site": "linkedin-learning",
+    "name": "course",
+    "description": "Get LinkedIn Learning course detail by slug or course URL",
+    "access": "read",
+    "domain": "www.linkedin.com",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "slug",
+        "type": "string",
+        "required": true,
+        "positional": true,
+        "help": "Course slug (e.g. agentic-ai-build-your-first-agentic-ai-system) or full /learning/<slug> URL"
+      }
+    ],
+    "columns": [
+      "title",
+      "slug",
+      "description",
+      "difficulty",
+      "duration_sec",
+      "videos_count",
+      "rating",
+      "rating_count",
+      "released",
+      "url"
+    ],
+    "type": "js",
+    "modulePath": "linkedin-learning/course.js",
+    "sourceFile": "linkedin-learning/course.js",
+    "navigateBefore": "https://www.linkedin.com"
+  },
+  {
+    "site": "linkedin-learning",
+    "name": "search",
+    "description": "Search LinkedIn Learning courses, videos, and learning paths by keyword",
+    "access": "read",
+    "domain": "www.linkedin.com",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "keywords",
+        "type": "string",
+        "required": true,
+        "positional": true,
+        "help": "Search keywords, e.g. \"AI agent\""
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 10,
+        "required": false,
+        "help": "Maximum results to return (1-50)"
+      }
+    ],
+    "columns": [
+      "rank",
+      "type",
+      "title",
+      "instructor",
+      "difficulty",
+      "duration_sec",
+      "rating",
+      "rating_count",
+      "viewers",
+      "url"
+    ],
+    "type": "js",
+    "modulePath": "linkedin-learning/search.js",
+    "sourceFile": "linkedin-learning/search.js",
+    "navigateBefore": "https://www.linkedin.com"
+  },
+  {
+    "site": "linkedin-learning",
+    "name": "trending",
+    "description": "Browse LinkedIn Learning recommended courses across personalized carousels",
+    "access": "read",
+    "domain": "www.linkedin.com",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 10,
+        "required": false,
+        "help": "Maximum results to return (1-50)"
+      }
+    ],
+    "columns": [
+      "rank",
+      "group",
+      "type",
+      "title",
+      "difficulty",
+      "viewers",
+      "url"
+    ],
+    "type": "js",
+    "modulePath": "linkedin-learning/trending.js",
+    "sourceFile": "linkedin-learning/trending.js",
     "navigateBefore": "https://www.linkedin.com"
   },
   {
@@ -15704,6 +17526,111 @@
   },
   {
     "site": "notebooklm",
+    "name": "add-source",
+    "description": "Add a URL, text, or local file source to an existing NotebookLM notebook",
+    "access": "write",
+    "domain": "notebooklm.google.com",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "notebook",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Notebook id from `notebooklm list` or full notebook URL"
+      },
+      {
+        "name": "url",
+        "type": "str",
+        "required": false,
+        "help": "Source URL to add (http/https). Pass exactly one of --url, --content, --file."
+      },
+      {
+        "name": "content",
+        "type": "str",
+        "required": false,
+        "help": "Raw text content to add as a Text source (max 10 MB)."
+      },
+      {
+        "name": "file",
+        "type": "str",
+        "required": false,
+        "help": "Local file path to upload as a source (max 52428800 bytes; pdf / txt / md / html / docx / etc.). Uses Google Drive's 3-step resumable upload protocol."
+      },
+      {
+        "name": "title",
+        "type": "str",
+        "required": false,
+        "help": "Title for the text source (default \"Text Source\"). Ignored for --url and --file."
+      },
+      {
+        "name": "mime-type",
+        "type": "str",
+        "required": false,
+        "help": "Override the auto-detected MIME type when --file is given."
+      },
+      {
+        "name": "execute",
+        "type": "boolean",
+        "required": false,
+        "help": "Actually add the remote source to the NotebookLM notebook"
+      }
+    ],
+    "columns": [
+      "notebook_id",
+      "source_id",
+      "kind",
+      "identifier",
+      "notebook_url"
+    ],
+    "type": "js",
+    "modulePath": "notebooklm/add-source.js",
+    "sourceFile": "notebooklm/add-source.js",
+    "navigateBefore": false
+  },
+  {
+    "site": "notebooklm",
+    "name": "create",
+    "description": "Create a new NotebookLM notebook with the given title",
+    "access": "write",
+    "domain": "notebooklm.google.com",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "title",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Notebook title (1-200 chars)"
+      },
+      {
+        "name": "emoji",
+        "type": "str",
+        "required": false,
+        "help": "Notebook emoji icon (default 📒)"
+      },
+      {
+        "name": "execute",
+        "type": "boolean",
+        "required": false,
+        "help": "Actually create the remote NotebookLM notebook"
+      }
+    ],
+    "columns": [
+      "id",
+      "title",
+      "emoji",
+      "url"
+    ],
+    "type": "js",
+    "modulePath": "notebooklm/create.js",
+    "sourceFile": "notebooklm/create.js",
+    "navigateBefore": false
+  },
+  {
+    "site": "notebooklm",
     "name": "current",
     "description": "Show metadata for the currently opened NotebookLM notebook tab",
     "access": "read",
@@ -15720,6 +17647,88 @@
     "type": "js",
     "modulePath": "notebooklm/current.js",
     "sourceFile": "notebooklm/current.js",
+    "navigateBefore": false
+  },
+  {
+    "site": "notebooklm",
+    "name": "generate-audio",
+    "description": "Trigger an Audio Overview (Deep Dive podcast) generation for a NotebookLM notebook, using all of its sources",
+    "access": "write",
+    "domain": "notebooklm.google.com",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "notebook",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Notebook id from `notebooklm list` or full notebook URL"
+      },
+      {
+        "name": "execute",
+        "type": "boolean",
+        "required": false,
+        "help": "Actually trigger remote NotebookLM audio generation"
+      }
+    ],
+    "columns": [
+      "notebook_id",
+      "audio_id",
+      "source_count",
+      "status",
+      "notebook_url"
+    ],
+    "type": "js",
+    "modulePath": "notebooklm/generate-audio.js",
+    "sourceFile": "notebooklm/generate-audio.js",
+    "navigateBefore": false
+  },
+  {
+    "site": "notebooklm",
+    "name": "generate-slides",
+    "description": "Trigger a Slide Deck (AI presentation) generation for a NotebookLM notebook, using all of its sources",
+    "access": "write",
+    "domain": "notebooklm.google.com",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "notebook",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Notebook id from `notebooklm list` or full notebook URL"
+      },
+      {
+        "name": "length",
+        "type": "str",
+        "required": false,
+        "help": "Slide deck length: 1=Short, 3=Default (default 3)"
+      },
+      {
+        "name": "language",
+        "type": "str",
+        "required": false,
+        "help": "Language code (default en)"
+      },
+      {
+        "name": "execute",
+        "type": "boolean",
+        "required": false,
+        "help": "Actually trigger remote NotebookLM slide deck generation"
+      }
+    ],
+    "columns": [
+      "notebook_id",
+      "slides_id",
+      "source_count",
+      "status",
+      "notebook_url"
+    ],
+    "type": "js",
+    "modulePath": "notebooklm/generate-slides.js",
+    "sourceFile": "notebooklm/generate-slides.js",
     "navigateBefore": false
   },
   {
@@ -16031,6 +18040,52 @@
     "type": "js",
     "modulePath": "notebooklm/summary.js",
     "sourceFile": "notebooklm/summary.js",
+    "navigateBefore": false
+  },
+  {
+    "site": "notebooklm",
+    "name": "write-note",
+    "description": "Create a Studio note in an existing NotebookLM notebook with the given title and Markdown content",
+    "access": "write",
+    "domain": "notebooklm.google.com",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "notebook",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Notebook id from `notebooklm list` or full notebook URL"
+      },
+      {
+        "name": "title",
+        "type": "str",
+        "required": true,
+        "help": "Note title (1-200 chars)"
+      },
+      {
+        "name": "content",
+        "type": "str",
+        "required": true,
+        "help": "Note body as Markdown"
+      },
+      {
+        "name": "execute",
+        "type": "boolean",
+        "required": false,
+        "help": "Actually create the remote NotebookLM note"
+      }
+    ],
+    "columns": [
+      "notebook_id",
+      "note_id",
+      "title",
+      "notebook_url"
+    ],
+    "type": "js",
+    "modulePath": "notebooklm/write-note.js",
+    "sourceFile": "notebooklm/write-note.js",
     "navigateBefore": false
   },
   {
@@ -19295,7 +21350,11 @@
       "author",
       "upvotes",
       "comments",
-      "url"
+      "url",
+      "post_hint",
+      "url_overridden_by_dest",
+      "preview_image_url",
+      "gallery_urls"
     ],
     "type": "js",
     "modulePath": "reddit/frontpage.js",
@@ -19327,7 +21386,11 @@
       "comments",
       "postId",
       "author",
-      "url"
+      "url",
+      "post_hint",
+      "url_overridden_by_dest",
+      "preview_image_url",
+      "gallery_urls"
     ],
     "type": "js",
     "modulePath": "reddit/home.js",
@@ -19366,7 +21429,11 @@
       "comments",
       "postId",
       "author",
-      "url"
+      "url",
+      "post_hint",
+      "url_overridden_by_dest",
+      "preview_image_url",
+      "gallery_urls"
     ],
     "type": "js",
     "modulePath": "reddit/hot.js",
@@ -19392,11 +21459,19 @@
     ],
     "columns": [
       "rank",
+      "id",
       "title",
       "subreddit",
       "score",
       "comments",
-      "url"
+      "author",
+      "url",
+      "created_utc",
+      "selftext",
+      "post_hint",
+      "url_overridden_by_dest",
+      "preview_image_url",
+      "gallery_urls"
     ],
     "type": "js",
     "modulePath": "reddit/popular.js",
@@ -19621,12 +21696,19 @@
       }
     ],
     "columns": [
+      "id",
       "title",
       "subreddit",
       "author",
       "score",
       "comments",
-      "url"
+      "url",
+      "created_utc",
+      "selftext",
+      "post_hint",
+      "url_overridden_by_dest",
+      "preview_image_url",
+      "gallery_urls"
     ],
     "type": "js",
     "modulePath": "reddit/search.js",
@@ -19672,11 +21754,19 @@
       }
     ],
     "columns": [
+      "id",
       "title",
+      "subreddit",
       "author",
       "upvotes",
       "comments",
-      "url"
+      "url",
+      "created_utc",
+      "selftext",
+      "post_hint",
+      "url_overridden_by_dest",
+      "preview_image_url",
+      "gallery_urls"
     ],
     "type": "js",
     "modulePath": "reddit/subreddit.js",
@@ -19740,6 +21830,36 @@
     "type": "js",
     "modulePath": "reddit/subscribe.js",
     "sourceFile": "reddit/subscribe.js",
+    "navigateBefore": "https://reddit.com"
+  },
+  {
+    "site": "reddit",
+    "name": "subscribed",
+    "description": "List subreddits you are subscribed to",
+    "access": "read",
+    "domain": "reddit.com",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 100,
+        "required": false,
+        "help": "Max subreddits to return (1-1000, auto-paginates)"
+      }
+    ],
+    "columns": [
+      "id",
+      "subreddit",
+      "title",
+      "subscribers",
+      "description",
+      "url"
+    ],
+    "type": "js",
+    "modulePath": "reddit/subscribed.js",
+    "sourceFile": "reddit/subscribed.js",
     "navigateBefore": "https://reddit.com"
   },
   {
@@ -21563,6 +23683,229 @@
     "sourceFile": "substack/search.js"
   },
   {
+    "site": "suno",
+    "name": "download",
+    "description": "Download an existing Suno clip (MP3 + optional WAV/M4A/video) by id",
+    "access": "write",
+    "domain": "suno.com",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "clip",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Clip UUID or https://suno.com/song/<id> URL"
+      },
+      {
+        "name": "formats",
+        "type": "str",
+        "required": false,
+        "help": "Comma-separated formats: mp3, m4a, wav, video, cover, metadata. Default: mp3,metadata"
+      },
+      {
+        "name": "op",
+        "type": "str",
+        "required": false,
+        "help": "Output directory (default: ~/Music/suno)"
+      },
+      {
+        "name": "confirm-paid",
+        "type": "boolean",
+        "default": false,
+        "required": false,
+        "help": "Required to allow paid downloads (wav). Without it, paid formats are skipped with a warning."
+      }
+    ],
+    "columns": [
+      "status",
+      "clip",
+      "title",
+      "files",
+      "link"
+    ],
+    "defaultFormat": "plain",
+    "type": "js",
+    "modulePath": "suno/download.js",
+    "sourceFile": "suno/download.js",
+    "navigateBefore": false,
+    "siteSession": "persistent"
+  },
+  {
+    "site": "suno",
+    "name": "generate",
+    "description": "Generate music with Suno (V5.5 chirp-fenix by default) and download clips locally",
+    "access": "write",
+    "domain": "suno.com",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "prompt",
+        "type": "str",
+        "required": false,
+        "positional": true,
+        "help": "Simple-mode description (ignored when --lyrics is provided)"
+      },
+      {
+        "name": "lyrics",
+        "type": "str",
+        "required": false,
+        "help": "Custom-mode lyrics (with [Verse]/[Chorus] metatags). Triggers Custom mode."
+      },
+      {
+        "name": "tags",
+        "type": "str",
+        "required": false,
+        "help": "Custom-mode style tags (genre, BPM, instruments...). Used with --lyrics."
+      },
+      {
+        "name": "negative-tags",
+        "type": "str",
+        "required": false,
+        "help": "Custom-mode style exclusions (e.g. \"no vocals, no autotune\"). Used with --lyrics."
+      },
+      {
+        "name": "title",
+        "type": "str",
+        "required": false,
+        "help": "Song title (default: auto-derived from prompt)"
+      },
+      {
+        "name": "instrumental",
+        "type": "boolean",
+        "default": false,
+        "required": false,
+        "help": "No vocals"
+      },
+      {
+        "name": "model",
+        "type": "str",
+        "required": false,
+        "help": "Model id: chirp-fenix, chirp-bluejay, chirp-v4, chirp-v3-5. Default: chirp-fenix"
+      },
+      {
+        "name": "weirdness",
+        "type": "str",
+        "required": false,
+        "help": "Creative weirdness slider (0..1). Default: 0.5"
+      },
+      {
+        "name": "style-weight",
+        "type": "str",
+        "required": false,
+        "help": "Style adherence slider (0..1). Default: 0.5"
+      },
+      {
+        "name": "formats",
+        "type": "str",
+        "required": false,
+        "help": "Comma-separated download formats: mp3, m4a, wav, video, cover, metadata. Default: mp3,metadata"
+      },
+      {
+        "name": "op",
+        "type": "str",
+        "required": false,
+        "help": "Output directory (default: ~/Music/suno)"
+      },
+      {
+        "name": "timeout",
+        "type": "int",
+        "default": 300,
+        "required": false,
+        "help": "Max seconds to wait for clips to finish (default: 300)"
+      },
+      {
+        "name": "sd",
+        "type": "boolean",
+        "default": false,
+        "required": false,
+        "help": "Skip download; only print clip ids and Suno URLs"
+      },
+      {
+        "name": "confirm-paid",
+        "type": "boolean",
+        "default": false,
+        "required": false,
+        "help": "Required to allow paid downloads (wav). Without it, paid formats are skipped with a warning."
+      }
+    ],
+    "columns": [
+      "status",
+      "clip",
+      "title",
+      "files",
+      "link"
+    ],
+    "defaultFormat": "plain",
+    "type": "js",
+    "modulePath": "suno/generate.js",
+    "sourceFile": "suno/generate.js",
+    "navigateBefore": false,
+    "siteSession": "persistent"
+  },
+  {
+    "site": "suno",
+    "name": "list",
+    "description": "List recent Suno clips in your library (id, title, status, created_at, link)",
+    "access": "read",
+    "domain": "suno.com",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20,
+        "required": false,
+        "help": "Max clips to list (default: 20)"
+      },
+      {
+        "name": "page",
+        "type": "int",
+        "default": 0,
+        "required": false,
+        "help": "Pagination offset, 0-based (default: 0)"
+      }
+    ],
+    "columns": [
+      "rank",
+      "clip",
+      "title",
+      "status",
+      "created",
+      "link"
+    ],
+    "type": "js",
+    "modulePath": "suno/list.js",
+    "sourceFile": "suno/list.js",
+    "navigateBefore": false,
+    "siteSession": "persistent"
+  },
+  {
+    "site": "suno",
+    "name": "status",
+    "description": "Check Suno login, plan, credit balance, and captcha readiness",
+    "access": "read",
+    "domain": "suno.com",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [],
+    "columns": [
+      "Status",
+      "Plan",
+      "Credits",
+      "Monthly",
+      "Captcha"
+    ],
+    "type": "js",
+    "modulePath": "suno/status.js",
+    "sourceFile": "suno/status.js",
+    "navigateBefore": false,
+    "siteSession": "persistent"
+  },
+  {
     "site": "taobao",
     "name": "add-cart",
     "description": "淘宝加入购物车",
@@ -22896,8 +25239,48 @@
   },
   {
     "site": "twitter",
+    "name": "device-follow",
+    "description": "Read the /i/timeline device-follow notification stream (tweets aggregated under a bell-icon \"new posts from @userA and N others\" notification)",
+    "access": "read",
+    "domain": "x.com",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20,
+        "required": false,
+        "help": "Maximum number of tweets to return (1-200, default 20)"
+      },
+      {
+        "name": "top-by-engagement",
+        "type": "int",
+        "default": 0,
+        "required": false,
+        "help": "When set to N>0, re-rank by weighted engagement and return the top N. Default 0 keeps upstream ordering."
+      }
+    ],
+    "columns": [
+      "id",
+      "author",
+      "text",
+      "likes",
+      "retweets",
+      "replies",
+      "views",
+      "created_at",
+      "url"
+    ],
+    "type": "js",
+    "modulePath": "twitter/device-follow.js",
+    "sourceFile": "twitter/device-follow.js",
+    "navigateBefore": "https://x.com"
+  },
+  {
+    "site": "twitter",
     "name": "download",
-    "description": "Download Twitter/X media (images and videos). Provide either <username> to scan a profile's media tab, or --tweet-url to download a single tweet.",
+    "description": "Download Twitter/X media (images and videos). Provide either <username> to fetch every media item from their profile via the GraphQL UserMedia endpoint with cursor pagination, or --tweet-url to download a single tweet.",
     "access": "read",
     "domain": "x.com",
     "strategy": "cookie",
@@ -22908,7 +25291,7 @@
         "type": "str",
         "required": false,
         "positional": true,
-        "help": "Twitter username (with or without @) to scan their /media tab. Either <username> or --tweet-url is required."
+        "help": "Twitter username (with or without @) to scan their profile media. Either <username> or --tweet-url is required."
       },
       {
         "name": "tweet-url",
@@ -22933,6 +25316,8 @@
     ],
     "columns": [
       "index",
+      "tweet_id",
+      "url",
       "type",
       "status",
       "size"
@@ -23175,6 +25560,49 @@
   },
   {
     "site": "twitter",
+    "name": "list-create",
+    "description": "Create a new Twitter/X list (returns the new list id)",
+    "access": "write",
+    "domain": "x.com",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "name",
+        "type": "string",
+        "required": true,
+        "positional": true,
+        "help": "List name (max 25 chars)"
+      },
+      {
+        "name": "description",
+        "type": "string",
+        "default": "",
+        "required": false,
+        "help": "Optional list description (max 100 chars)"
+      },
+      {
+        "name": "mode",
+        "type": "string",
+        "default": "public",
+        "required": false,
+        "help": "public | private"
+      }
+    ],
+    "columns": [
+      "id",
+      "name",
+      "description",
+      "mode",
+      "status"
+    ],
+    "type": "js",
+    "modulePath": "twitter/list-create.js",
+    "sourceFile": "twitter/list-create.js",
+    "navigateBefore": "https://x.com"
+  },
+  {
+    "site": "twitter",
     "name": "list-remove",
     "description": "Remove a user from a Twitter/X list you own (toggles via UI; no-op if not currently a member)",
     "access": "write",
@@ -23243,6 +25671,7 @@
     "columns": [
       "id",
       "author",
+      "bio",
       "text",
       "likes",
       "retweets",
@@ -23250,7 +25679,9 @@
       "created_at",
       "url",
       "has_media",
-      "media_urls"
+      "media_urls",
+      "card",
+      "quoted_tweet"
     ],
     "type": "js",
     "modulePath": "twitter/list-tweets.js",
@@ -23641,13 +26072,16 @@
     "columns": [
       "id",
       "author",
+      "bio",
       "text",
       "created_at",
       "likes",
       "views",
       "url",
       "has_media",
-      "media_urls"
+      "media_urls",
+      "card",
+      "quoted_tweet"
     ],
     "type": "js",
     "modulePath": "twitter/search.js",
@@ -23688,12 +26122,15 @@
     "columns": [
       "id",
       "author",
+      "bio",
       "text",
       "likes",
       "retweets",
       "url",
       "has_media",
-      "media_urls"
+      "media_urls",
+      "card",
+      "quoted_tweet"
     ],
     "type": "js",
     "modulePath": "twitter/thread.js",
@@ -23738,6 +26175,7 @@
     "columns": [
       "id",
       "author",
+      "bio",
       "text",
       "likes",
       "retweets",
@@ -23746,7 +26184,9 @@
       "created_at",
       "url",
       "has_media",
-      "media_urls"
+      "media_urls",
+      "card",
+      "quoted_tweet"
     ],
     "type": "js",
     "modulePath": "twitter/timeline.js",
@@ -23823,7 +26263,8 @@
       "views",
       "url",
       "has_media",
-      "media_urls"
+      "media_urls",
+      "quoted_tweet"
     ],
     "type": "js",
     "modulePath": "twitter/tweets.js",
@@ -24069,6 +26510,168 @@
     "modulePath": "uiverse/preview.js",
     "sourceFile": "uiverse/preview.js",
     "navigateBefore": "https://uiverse.io"
+  },
+  {
+    "site": "upwork",
+    "name": "detail",
+    "aliases": [
+      "job",
+      "view"
+    ],
+    "description": "Read the full Upwork job posting by ciphertext id (e.g. ~022054964136512093518)",
+    "access": "read",
+    "domain": "www.upwork.com",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "id",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Job ciphertext id (~01… / ~02…) or full /jobs/~02… URL"
+      }
+    ],
+    "columns": [
+      "id",
+      "title",
+      "type",
+      "budget",
+      "experienceLevel",
+      "workload",
+      "category",
+      "skills",
+      "description",
+      "clientCountry",
+      "clientSpent",
+      "clientHires",
+      "clientRating",
+      "proposalsCount",
+      "publishedOn",
+      "url"
+    ],
+    "type": "js",
+    "modulePath": "upwork/detail.js",
+    "sourceFile": "upwork/detail.js",
+    "navigateBefore": false
+  },
+  {
+    "site": "upwork",
+    "name": "feed",
+    "aliases": [
+      "best-matches"
+    ],
+    "description": "Upwork personalized jobs feed (best-matches | most-recent) — requires login",
+    "access": "read",
+    "domain": "www.upwork.com",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "tab",
+        "type": "str",
+        "default": "best-matches",
+        "required": false,
+        "positional": true,
+        "help": "Feed tab: best-matches | most-recent"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20,
+        "required": false,
+        "help": "Max rows to return (1-50, capped at one page)"
+      }
+    ],
+    "columns": [
+      "rank",
+      "id",
+      "title",
+      "type",
+      "budget",
+      "experienceLevel",
+      "proposalsTier",
+      "skills",
+      "clientCountry",
+      "clientRating",
+      "publishedOn",
+      "url"
+    ],
+    "type": "js",
+    "modulePath": "upwork/feed.js",
+    "sourceFile": "upwork/feed.js",
+    "navigateBefore": false
+  },
+  {
+    "site": "upwork",
+    "name": "search",
+    "description": "Upwork keyword job search (logged-in browser session, US site)",
+    "access": "read",
+    "domain": "www.upwork.com",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "query",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Job keyword (skill / title / company)"
+      },
+      {
+        "name": "location",
+        "type": "string",
+        "default": "",
+        "required": false,
+        "help": "Country/city filter (e.g. \"United States\", \"Remote\")"
+      },
+      {
+        "name": "category",
+        "type": "string",
+        "default": "",
+        "required": false,
+        "help": "Category uid filter (advanced; from job detail `category` slug)"
+      },
+      {
+        "name": "sort",
+        "type": "string",
+        "default": "recency",
+        "required": false,
+        "help": "Sort: recency | relevance | client_total_charge | client_total_reviews"
+      },
+      {
+        "name": "page",
+        "type": "int",
+        "default": 1,
+        "required": false,
+        "help": "Page number (1-based)"
+      },
+      {
+        "name": "per_page",
+        "type": "int",
+        "default": 10,
+        "required": false,
+        "help": "Rows per page (10-50, capped at one page)"
+      }
+    ],
+    "columns": [
+      "rank",
+      "id",
+      "title",
+      "type",
+      "budget",
+      "experienceLevel",
+      "proposalsTier",
+      "skills",
+      "clientCountry",
+      "clientRating",
+      "publishedOn",
+      "url"
+    ],
+    "type": "js",
+    "modulePath": "upwork/search.js",
+    "sourceFile": "upwork/search.js",
+    "navigateBefore": false
   },
   {
     "site": "v2ex",
@@ -24550,6 +27153,33 @@
     "type": "js",
     "modulePath": "weibo/comments.js",
     "sourceFile": "weibo/comments.js",
+    "navigateBefore": "https://weibo.com"
+  },
+  {
+    "site": "weibo",
+    "name": "delete",
+    "description": "Delete one of my Weibo posts by id",
+    "access": "write",
+    "domain": "weibo.com",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "id",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Post ID (numeric idstr or mblogid from URL / weibo me / weibo post output)"
+      }
+    ],
+    "columns": [
+      "status",
+      "id",
+      "mblogid"
+    ],
+    "type": "js",
+    "modulePath": "weibo/delete.js",
+    "sourceFile": "weibo/delete.js",
     "navigateBefore": "https://weibo.com"
   },
   {
@@ -25124,6 +27754,63 @@
   },
   {
     "site": "weread",
+    "name": "book-search",
+    "description": "Search within a WeRead book after resolving it by title",
+    "access": "read",
+    "domain": "weread.qq.com",
+    "strategy": "public",
+    "browser": false,
+    "args": [
+      {
+        "name": "book",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Book title keyword, numeric bookId, or reader URL"
+      },
+      {
+        "name": "query",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Keyword to search inside the selected book"
+      },
+      {
+        "name": "book-rank",
+        "type": "int",
+        "default": 1,
+        "required": false,
+        "help": "Which book search result to use when book is a title keyword"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20,
+        "required": false,
+        "help": "Max in-book matches to return (1-100)"
+      },
+      {
+        "name": "fragment-size",
+        "type": "int",
+        "default": 150,
+        "required": false,
+        "help": "Snippet length around each match (1-500)"
+      },
+      {
+        "name": "raw",
+        "type": "boolean",
+        "default": false,
+        "required": false,
+        "help": "Output structured rows instead of markdown text"
+      }
+    ],
+    "defaultFormat": "md",
+    "type": "js",
+    "modulePath": "weread/book-search.js",
+    "sourceFile": "weread/book-search.js"
+  },
+  {
+    "site": "weread",
     "name": "highlights",
     "description": "List your highlights (underlines) in a book",
     "access": "read",
@@ -25310,6 +27997,379 @@
     "modulePath": "weread/shelf.js",
     "sourceFile": "weread/shelf.js",
     "navigateBefore": "https://weread.qq.com"
+  },
+  {
+    "site": "weread-official",
+    "name": "book",
+    "description": "Show WeRead book metadata, chapters, and reading progress",
+    "access": "read",
+    "domain": "weread.qq.com",
+    "strategy": "public",
+    "browser": false,
+    "args": [
+      {
+        "name": "bookId",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "WeRead bookId (from `weread-official search`)"
+      },
+      {
+        "name": "no-chapters",
+        "type": "boolean",
+        "default": false,
+        "required": false,
+        "help": "Skip /book/chapterinfo call"
+      },
+      {
+        "name": "no-progress",
+        "type": "boolean",
+        "default": false,
+        "required": false,
+        "help": "Skip /book/getprogress call"
+      }
+    ],
+    "columns": [
+      "section",
+      "idx",
+      "key",
+      "value",
+      "link"
+    ],
+    "type": "js",
+    "modulePath": "weread-official/book.js",
+    "sourceFile": "weread-official/book.js"
+  },
+  {
+    "site": "weread-official",
+    "name": "discover",
+    "description": "Personalized or similar-book recommendations from WeRead",
+    "access": "read",
+    "domain": "weread.qq.com",
+    "strategy": "public",
+    "browser": false,
+    "args": [
+      {
+        "name": "bookId",
+        "type": "str",
+        "required": false,
+        "positional": true,
+        "help": "Anchor bookId for similar-book mode; omit for personalized recommendations"
+      },
+      {
+        "name": "count",
+        "type": "int",
+        "default": 12,
+        "required": false,
+        "help": "Page size (default 12)"
+      },
+      {
+        "name": "max-idx",
+        "type": "int",
+        "default": 0,
+        "required": false,
+        "help": "Pagination cursor (recommend: previous searchIdx; similar: previous idx)"
+      },
+      {
+        "name": "session-id",
+        "type": "str",
+        "required": false,
+        "help": "Carry-forward sessionId for /book/similar paging"
+      }
+    ],
+    "columns": [
+      "rank",
+      "mode",
+      "bookId",
+      "title",
+      "author",
+      "rating",
+      "readingCount",
+      "category",
+      "idx",
+      "reason",
+      "cover",
+      "intro",
+      "link"
+    ],
+    "type": "js",
+    "modulePath": "weread-official/discover.js",
+    "sourceFile": "weread-official/discover.js"
+  },
+  {
+    "site": "weread-official",
+    "name": "list-apis",
+    "description": "List every api_name supported by the WeRead agent gateway",
+    "access": "read",
+    "domain": "weread.qq.com",
+    "strategy": "public",
+    "browser": false,
+    "args": [],
+    "columns": [
+      "rank",
+      "apiName",
+      "description",
+      "required",
+      "optional",
+      "extras"
+    ],
+    "type": "js",
+    "modulePath": "weread-official/list-apis.js",
+    "sourceFile": "weread-official/list-apis.js"
+  },
+  {
+    "site": "weread-official",
+    "name": "notes",
+    "description": "List notebooks overview or merged highlights+thoughts for a book",
+    "access": "read",
+    "domain": "weread.qq.com",
+    "strategy": "public",
+    "browser": false,
+    "args": [
+      {
+        "name": "bookId",
+        "type": "str",
+        "required": false,
+        "positional": true,
+        "help": "Limit to one book; omit for full notebook overview"
+      },
+      {
+        "name": "count",
+        "type": "int",
+        "default": 20,
+        "required": false,
+        "help": "Page size for the notebooks overview (1-100)"
+      },
+      {
+        "name": "last-sort",
+        "type": "int",
+        "required": false,
+        "help": "Cursor: pass previous page sort value to fetch the next page (/user/notebooks)"
+      }
+    ],
+    "columns": [
+      "kind",
+      "bookId",
+      "title",
+      "author",
+      "chapter",
+      "reviewCount",
+      "noteCount",
+      "bookmarkCount",
+      "totalNotes",
+      "progress",
+      "finished",
+      "sort",
+      "range",
+      "text",
+      "thought",
+      "star",
+      "createTime",
+      "link"
+    ],
+    "type": "js",
+    "modulePath": "weread-official/notes.js",
+    "sourceFile": "weread-official/notes.js"
+  },
+  {
+    "site": "weread-official",
+    "name": "readdata",
+    "description": "Reading statistics: time, streak, preferences, top books",
+    "access": "read",
+    "domain": "weread.qq.com",
+    "strategy": "public",
+    "browser": false,
+    "args": [
+      {
+        "name": "mode",
+        "type": "str",
+        "default": "monthly",
+        "required": false,
+        "help": "Stat window: weekly / monthly / annually / overall",
+        "choices": [
+          "weekly",
+          "monthly",
+          "annually",
+          "overall"
+        ]
+      },
+      {
+        "name": "base-time",
+        "type": "int",
+        "required": false,
+        "help": "Optional Unix timestamp inside the target period; default is current period"
+      }
+    ],
+    "columns": [
+      "section",
+      "idx",
+      "key",
+      "value",
+      "detail"
+    ],
+    "type": "js",
+    "modulePath": "weread-official/readdata.js",
+    "sourceFile": "weread-official/readdata.js"
+  },
+  {
+    "site": "weread-official",
+    "name": "review",
+    "description": "Browse public reviews of a WeRead book",
+    "access": "read",
+    "domain": "weread.qq.com",
+    "strategy": "public",
+    "browser": false,
+    "args": [
+      {
+        "name": "bookId",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "WeRead bookId (from `weread-official search`)"
+      },
+      {
+        "name": "type",
+        "type": "str",
+        "default": "all",
+        "required": false,
+        "help": "Review filter (all/recommend/thumbs-down/newest/neutral)",
+        "choices": [
+          "all",
+          "recommend",
+          "thumbs-down",
+          "newest",
+          "neutral"
+        ]
+      },
+      {
+        "name": "count",
+        "type": "int",
+        "default": 20,
+        "required": false,
+        "help": "Page size (1-100, default 20)"
+      },
+      {
+        "name": "max-idx",
+        "type": "int",
+        "default": 0,
+        "required": false,
+        "help": "Pagination cursor — pass idx from last row of previous page"
+      },
+      {
+        "name": "synckey",
+        "type": "int",
+        "required": false,
+        "help": "Sync cursor returned by previous response"
+      }
+    ],
+    "columns": [
+      "rank",
+      "idx",
+      "reviewId",
+      "star",
+      "starLabel",
+      "author",
+      "isFinish",
+      "chapter",
+      "content",
+      "createTime",
+      "link"
+    ],
+    "type": "js",
+    "modulePath": "weread-official/review.js",
+    "sourceFile": "weread-official/review.js"
+  },
+  {
+    "site": "weread-official",
+    "name": "search",
+    "description": "Search WeRead store via the official agent gateway",
+    "access": "read",
+    "domain": "weread.qq.com",
+    "strategy": "public",
+    "browser": false,
+    "args": [
+      {
+        "name": "keyword",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Search keyword"
+      },
+      {
+        "name": "scope",
+        "type": "str",
+        "default": "ebook",
+        "required": false,
+        "help": "Search type (all/ebook/webnovel/audio/author/fulltext/booklist/mp/article)",
+        "choices": [
+          "all",
+          "ebook",
+          "webnovel",
+          "audio",
+          "author",
+          "fulltext",
+          "booklist",
+          "mp",
+          "article"
+        ]
+      },
+      {
+        "name": "count",
+        "type": "int",
+        "required": false,
+        "help": "Page size (gateway default 15 when omitted)"
+      },
+      {
+        "name": "max-idx",
+        "type": "int",
+        "default": 0,
+        "required": false,
+        "help": "Pagination offset, use searchIdx of last item from previous page"
+      }
+    ],
+    "columns": [
+      "rank",
+      "scope",
+      "bookId",
+      "title",
+      "author",
+      "rating",
+      "readingCount",
+      "category",
+      "searchIdx",
+      "cover",
+      "intro",
+      "link"
+    ],
+    "type": "js",
+    "modulePath": "weread-official/search.js",
+    "sourceFile": "weread-official/search.js"
+  },
+  {
+    "site": "weread-official",
+    "name": "shelf",
+    "description": "Sync your WeRead shelf (books + albums + article bookmark entry) via the official gateway",
+    "access": "read",
+    "domain": "weread.qq.com",
+    "strategy": "public",
+    "browser": false,
+    "args": [],
+    "columns": [
+      "kind",
+      "id",
+      "title",
+      "author",
+      "category",
+      "secret",
+      "isTop",
+      "finished",
+      "updateTime",
+      "cover",
+      "link"
+    ],
+    "type": "js",
+    "modulePath": "weread-official/shelf.js",
+    "sourceFile": "weread-official/shelf.js"
   },
   {
     "site": "wikidata",
@@ -25701,6 +28761,54 @@
   },
   {
     "site": "xianyu",
+    "name": "inbox",
+    "description": "列出闲鱼最近私信会话",
+    "access": "read",
+    "domain": "www.goofish.com",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20,
+        "required": false,
+        "help": "Number of conversations to return"
+      },
+      {
+        "name": "unread-only",
+        "type": "bool",
+        "default": false,
+        "required": false,
+        "help": "Return only conversations with unread messages"
+      },
+      {
+        "name": "resolve-ids",
+        "type": "bool",
+        "default": false,
+        "required": false,
+        "help": "Click each visible conversation to resolve item_id and peer_user_id from the chat URL"
+      }
+    ],
+    "columns": [
+      "rank",
+      "peer_name",
+      "peer_user_id",
+      "item_id",
+      "item_title",
+      "price",
+      "last_message",
+      "unread",
+      "unread_count",
+      "url"
+    ],
+    "type": "js",
+    "modulePath": "xianyu/inbox.js",
+    "sourceFile": "xianyu/inbox.js",
+    "navigateBefore": false
+  },
+  {
+    "site": "xianyu",
     "name": "item",
     "description": "查看闲鱼商品详情",
     "access": "read",
@@ -25729,6 +28837,58 @@
     "type": "js",
     "modulePath": "xianyu/item.js",
     "sourceFile": "xianyu/item.js",
+    "navigateBefore": false
+  },
+  {
+    "site": "xianyu",
+    "name": "messages",
+    "description": "读取指定闲鱼私信会话的最近聊天内容",
+    "access": "read",
+    "domain": "www.goofish.com",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "item_id",
+        "type": "str",
+        "required": false,
+        "positional": true,
+        "help": "闲鱼商品 item_id"
+      },
+      {
+        "name": "user_id",
+        "type": "str",
+        "required": false,
+        "positional": true,
+        "help": "聊一聊对方的 user_id / peerUserId"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 50,
+        "required": false,
+        "help": "Number of visible messages to return"
+      },
+      {
+        "name": "rank",
+        "type": "int",
+        "default": 0,
+        "required": false,
+        "help": "Conversation rank from xianyu inbox; clicks the visible row instead of requiring IDs"
+      }
+    ],
+    "columns": [
+      "index",
+      "peer_name",
+      "item_title",
+      "message",
+      "item_id",
+      "peer_user_id",
+      "url"
+    ],
+    "type": "js",
+    "modulePath": "xianyu/messages.js",
+    "sourceFile": "xianyu/messages.js",
     "navigateBefore": false
   },
   {
@@ -25806,6 +28966,56 @@
     "type": "js",
     "modulePath": "xianyu/publish.js",
     "sourceFile": "xianyu/publish.js",
+    "navigateBefore": false
+  },
+  {
+    "site": "xianyu",
+    "name": "reply",
+    "description": "回复指定闲鱼私信会话",
+    "access": "write",
+    "domain": "www.goofish.com",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "item_id",
+        "type": "str",
+        "required": false,
+        "positional": true,
+        "help": "闲鱼商品 item_id"
+      },
+      {
+        "name": "user_id",
+        "type": "str",
+        "required": false,
+        "positional": true,
+        "help": "聊一聊对方的 user_id / peerUserId"
+      },
+      {
+        "name": "text",
+        "type": "str",
+        "required": true,
+        "help": "Message text to send"
+      },
+      {
+        "name": "rank",
+        "type": "int",
+        "default": 0,
+        "required": false,
+        "help": "Conversation rank from xianyu inbox; clicks the visible row instead of requiring IDs"
+      }
+    ],
+    "columns": [
+      "status",
+      "peer_name",
+      "item_title",
+      "price",
+      "location",
+      "message"
+    ],
+    "type": "js",
+    "modulePath": "xianyu/reply.js",
+    "sourceFile": "xianyu/reply.js",
     "navigateBefore": false
   },
   {
@@ -26182,6 +29392,40 @@
     "type": "js",
     "modulePath": "xiaohongshu/creator-stats.js",
     "sourceFile": "xiaohongshu/creator-stats.js",
+    "navigateBefore": false
+  },
+  {
+    "site": "xiaohongshu",
+    "name": "delete-note",
+    "description": "删除小红书已发布笔记 (creator center UI automation)",
+    "access": "write",
+    "domain": "creator.xiaohongshu.com",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "note-id",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Note ID (e.g. 6a08ba0b000000000702a893 from xiaohongshu creator-notes / URL)"
+      },
+      {
+        "name": "execute",
+        "type": "boolean",
+        "default": false,
+        "required": false,
+        "help": "Actually click delete + confirm. Default is dry-run target verification only."
+      }
+    ],
+    "columns": [
+      "status",
+      "note_id",
+      "message"
+    ],
+    "type": "js",
+    "modulePath": "xiaohongshu/delete-note.js",
+    "sourceFile": "xiaohongshu/delete-note.js",
     "navigateBefore": false
   },
   {
@@ -27686,6 +30930,36 @@
     "navigateBefore": "https://yollomi.com"
   },
   {
+    "site": "youdao",
+    "name": "note",
+    "description": "Read a public shared Youdao Note",
+    "access": "read",
+    "domain": "share.note.youdao.com",
+    "strategy": "public",
+    "browser": true,
+    "args": [
+      {
+        "name": "url",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Full share URL of the Youdao Note"
+      }
+    ],
+    "columns": [
+      "title",
+      "content",
+      "summary",
+      "keywords",
+      "created_at",
+      "file_size",
+      "url"
+    ],
+    "type": "js",
+    "modulePath": "youdao/note.js",
+    "sourceFile": "youdao/note.js"
+  },
+  {
     "site": "youtube",
     "name": "channel",
     "description": "Get YouTube channel info and recent videos",
@@ -28394,6 +31668,56 @@
   },
   {
     "site": "zhihu",
+    "name": "answer-comments",
+    "description": "知乎回答评论列表",
+    "access": "read",
+    "domain": "www.zhihu.com",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "id",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Answer ID, full Zhihu answer URL, or typed target (answer:<qid>:<aid>)"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20,
+        "required": false,
+        "help": "Number of top-level comments (max 1000)"
+      },
+      {
+        "name": "replies-limit",
+        "type": "int",
+        "default": 3,
+        "required": false,
+        "help": "Number of replies to include per top-level comment (max 100)"
+      }
+    ],
+    "columns": [
+      "rank",
+      "comment_rank",
+      "reply_rank",
+      "depth",
+      "id",
+      "parent_id",
+      "author",
+      "reply_to",
+      "likes",
+      "created_at",
+      "url",
+      "content"
+    ],
+    "type": "js",
+    "modulePath": "zhihu/answer-comments.js",
+    "sourceFile": "zhihu/answer-comments.js",
+    "navigateBefore": "https://www.zhihu.com"
+  },
+  {
+    "site": "zhihu",
     "name": "answer-detail",
     "description": "知乎单个回答完整内容（按 answer ID 获取）",
     "access": "read",
@@ -28783,8 +32107,10 @@
     ],
     "columns": [
       "rank",
+      "id",
       "author",
       "votes",
+      "url",
       "content"
     ],
     "type": "js",
@@ -28843,7 +32169,20 @@
         "type": "int",
         "default": 10,
         "required": false,
-        "help": "Number of results"
+        "help": "Number of results (max 1000; use normal-sized requests)"
+      },
+      {
+        "name": "type",
+        "type": "str",
+        "default": "all",
+        "required": false,
+        "help": "Result type: all, answer, article, or question",
+        "choices": [
+          "all",
+          "answer",
+          "article",
+          "question"
+        ]
       }
     ],
     "columns": [

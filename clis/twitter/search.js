@@ -1,6 +1,6 @@
 import { ArgumentError, AuthRequiredError, CommandExecutionError } from '@jackwener/opencli/errors';
 import { cli, Strategy } from '@jackwener/opencli/registry';
-import { extractMedia, normalizeTwitterGraphqlPayload, resolveTwitterOperationMetadata } from './shared.js';
+import { extractMedia, extractCard, extractQuotedTweet, normalizeTwitterGraphqlPayload, resolveTwitterOperationMetadata } from './shared.js';
 import { TWITTER_BEARER_TOKEN, applyTopByEngagement } from './utils.js';
 
 // ── Public-search operator surface ─────────────────────────────────────
@@ -212,15 +212,19 @@ function tweetToRow(result, seen) {
     if (!tweet?.rest_id || seen.has(tweet.rest_id)) return null;
     seen.add(tweet.rest_id);
     const tweetUser = tweet.core?.user_results?.result;
+    const bio = tweetUser?.legacy?.description || '';
     return {
         id: tweet.rest_id,
         author: tweetUser?.core?.screen_name || tweetUser?.legacy?.screen_name || 'unknown',
+        bio,
         text: tweet.note_tweet?.note_tweet_results?.result?.text || tweet.legacy?.full_text || '',
         created_at: tweet.legacy?.created_at || '',
         likes: tweet.legacy?.favorite_count || 0,
         views: tweet.views?.count || '0',
         url: `https://x.com/i/status/${tweet.rest_id}`,
         ...extractMedia(tweet.legacy),
+        card: extractCard(tweet),
+        quoted_tweet: extractQuotedTweet(tweet),
     };
 }
 
@@ -271,7 +275,7 @@ cli({
         { name: 'limit', type: 'int', default: 15, help: 'Maximum number of tweets to return (default 15). Result count after server-side filtering.' },
         { name: 'top-by-engagement', type: 'int', default: 0, help: 'When set to N>0, re-rank the results by weighted engagement (likes×1 + retweets×3 + replies×2 + bookmarks×5 + log10(views+1)×0.5) and return the top N. Default 0 keeps X\'s native ordering.' },
     ],
-    columns: ['id', 'author', 'text', 'created_at', 'likes', 'views', 'url', 'has_media', 'media_urls'],
+    columns: ['id', 'author', 'bio', 'text', 'created_at', 'likes', 'views', 'url', 'has_media', 'media_urls', 'card', 'quoted_tweet'],
     func: async (page, kwargs) => {
         const finalQuery = buildSearchQuery(kwargs.query, kwargs);
         if (!finalQuery) {
