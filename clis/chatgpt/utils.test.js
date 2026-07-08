@@ -3,8 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { JSDOM } from 'jsdom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ArgumentError, CommandExecutionError } from '@jackwener/opencli/errors';
-import { __test__, getChatGPTDetailRows, getChatGPTImageAssets, getChatGPTResponsePairCounts, getChatGPTVisibleImageUrls, getCurrentChatGPTModel, getCurrentChatGPTTool, isGenerating, openChatGPTConversation, prepareChatGPTImagePaths, selectChatGPTModel, selectChatGPTTool, sendChatGPTMessage, uploadChatGPTImages, waitForChatGPTDetailRows, waitForChatGPTImages, waitForChatGPTResponse } from './utils.js';
+import { ArgumentError, AuthRequiredError, CommandExecutionError } from '@jackwener/opencli/errors';
+import { __test__, getChatGPTDetailRows, getChatGPTImageAssets, getChatGPTResponsePairCounts, getChatGPTVisibleImageUrls, getCurrentChatGPTModel, getCurrentChatGPTTool, isGenerating, navigateToProject, openChatGPTConversation, prepareChatGPTImagePaths, selectChatGPTModel, selectChatGPTTool, sendChatGPTMessage, uploadChatGPTImages, waitForChatGPTDetailRows, waitForChatGPTImages, waitForChatGPTResponse } from './utils.js';
 
 const tempDirs = [];
 
@@ -43,10 +43,14 @@ function createDomEvaluatePage(html) {
         url: 'https://chatgpt.com/',
         runScripts: 'outside-only',
     });
-    for (const node of dom.window.document.querySelectorAll('button')) {
+    for (const node of dom.window.document.querySelectorAll('form, button, [role="menuitemradio"], [role="menuitem"], [role="option"], #prompt-textarea, [data-testid]')) {
         node.getBoundingClientRect = () => ({ width: 120, height: 36 });
+        node.scrollIntoView = () => {};
     }
     return {
+        dom,
+        goto: vi.fn().mockResolvedValue(undefined),
+        wait: vi.fn().mockResolvedValue(undefined),
         evaluate: vi.fn((script) => Promise.resolve(dom.window.eval(script))),
     };
 }
@@ -94,7 +98,9 @@ describe('chatgpt conversation id parsing', () => {
         expect(__test__.parseChatGPTConversationId('abc_123-def')).toBe('abc_123-def');
         expect(__test__.parseChatGPTConversationId('https://chatgpt.com/c/abc_123-def?model=gpt-5')).toBe('abc_123-def');
         expect(__test__.parseChatGPTConversationId('https://chat.openai.chatgpt.com/c/abc_123-def')).toBe('abc_123-def');
+        expect(__test__.parseChatGPTConversationId('https://chatgpt.com/g/g-p-12345678-demo/c/abc_123-def')).toBe('abc_123-def');
         expect(__test__.parseChatGPTConversationId('/c/abc_123-def')).toBe('abc_123-def');
+        expect(__test__.parseChatGPTConversationId('/g/g-p-12345678-demo/c/abc_123-def')).toBe('abc_123-def');
     });
 
     it('rejects invalid detail ids', () => {
@@ -125,6 +131,131 @@ describe('chatgpt conversation navigation', () => {
     });
 });
 
+function makeDeepResearchReport() {
+    return [
+        '# Executive Summary',
+        '',
+        'This completed Deep Research report is intentionally long enough to pass extraction heuristics.',
+        'It summarizes findings, constraints, evidence, and recommendations from multiple public sources.',
+        'The extraction path should read this markdown from metadata.chatgpt_sdk.widget_state.report_message.content.parts[0].',
+        'Using the conversation payload avoids the cross-origin internal deep research iframe boundary.',
+        'The report body includes repeated detail so the parser treats it as a real report, not a short UI preview.',
+        'Findings show that reliable automation should prefer captured backend conversation JSON over iframe DOM access.',
+        'Recommendations include returning diagnostics when no report is present and bounding source extraction.',
+        'References and Sources are represented in metadata content references, safe URLs, and search result groups.',
+        'Additional detail confirms that source de-duplication should key by URL and keep a readable title.',
+        'This paragraph pads the fixture with realistic report text for the minimum-length guard.',
+        'Another paragraph pads the fixture with realistic report text for the minimum-length guard.',
+        'A final paragraph pads the fixture with realistic report text for the minimum-length guard.',
+        '',
+        '## Sources',
+        '',
+        '- Example source',
+    ].join('\n');
+}
+
+function makeDeepResearchPayload(report = makeDeepResearchReport(), { conversationId = '' } = {}) {
+    const payload = {
+        mapping: {
+            report_node: {
+                message: {
+                    metadata: {
+                        chatgpt_sdk: {
+                            widget_state: JSON.stringify({
+                                status: 'completed',
+                                report_message: {
+                                    id: 'report-msg',
+                                    content: { parts: [report] },
+                                    metadata: {
+                                        content_references: [
+                                            { title: 'Reference A', url: 'https://example.com/a' },
+                                            { matched_text: 'Matched B', url: 'https://example.com/b' },
+                                        ],
+                                        safe_urls: ['https://example.com/c'],
+                                        search_result_groups: [
+                                            { entries: [{ title: 'Reference D', url: 'https://example.com/d' }] },
+                                        ],
+                                    },
+                                },
+                            }),
+                        },
+                    },
+                },
+            },
+        },
+    };
+    if (conversationId) payload.conversation_id = conversationId;
+    return payload;
+}
+
+describe('chatgpt deep research result extraction', () => {
+    it('extracts report markdown and sources from conversation widget_state', () => {
+        const result = __test__.extractDeepResearchFromConversationPayload(makeDeepResearchPayload());
+
+        expect(result).toMatchObject({
+            status: 'completed',
+            method: 'conversation-widget-state',
+            reportMessageId: 'report-msg',
+            reportLength: expect.any(Number),
+        });
+        expect(result.report).toContain('Executive Summary');
+        expect(result.sources).toEqual(expect.arrayContaining([
+            { title: 'Reference A', url: 'https://example.com/a' },
+            { title: 'Matched B', url: 'https://example.com/b' },
+            { title: '', url: 'https://example.com/c' },
+            { title: 'Reference D', url: 'https://example.com/d' },
+        ]));
+    });
+
+    it('extracts the requested report from captured conversation network entries', () => {
+        const shorterReport = `${makeDeepResearchReport()}\n\nshort`;
+        const longerReport = `${makeDeepResearchReport()}\n\nAdditional longer section.`;
+        const result = __test__.extractDeepResearchFromNetworkEntries([
+            { url: 'https://chatgpt.com/backend-api/bootstrap', responsePreview: '{}' },
+            {
+                url: 'https://chatgpt.com/backend-api/conversation/requested123',
+                responsePreview: JSON.stringify(makeDeepResearchPayload(shorterReport, { conversationId: 'requested123' })),
+            },
+            {
+                url: 'https://chatgpt.com/backend-api/conversation/stale45678',
+                responsePreview: JSON.stringify(makeDeepResearchPayload(longerReport, { conversationId: 'stale45678' })),
+            },
+        ], { expectedConversationId: 'requested123' });
+
+        expect(result.method).toBe('network-conversation-widget-state');
+        expect(result.networkUrl).toContain('/conversation/requested123');
+        expect(result.report).not.toContain('Additional longer section');
+    });
+
+    it('typed-fails when the conversation payload id does not match the requested id', () => {
+        expect(() => __test__.extractDeepResearchFromConversationPayload(
+            makeDeepResearchPayload(makeDeepResearchReport(), { conversationId: 'stale45678' }),
+            { expectedConversationId: 'requested123' },
+        )).toThrow(CommandExecutionError);
+    });
+
+    it('typed-fails malformed source rows instead of silently dropping them', () => {
+        const payload = makeDeepResearchPayload();
+        const widget = JSON.parse(payload.mapping.report_node.message.metadata.chatgpt_sdk.widget_state);
+        widget.report_message.metadata.search_result_groups = [
+            { entries: [{ title: 'Source without URL' }] },
+        ];
+        payload.mapping.report_node.message.metadata.chatgpt_sdk.widget_state = JSON.stringify(widget);
+
+        expect(() => __test__.extractDeepResearchFromConversationPayload(payload))
+            .toThrow(CommandExecutionError);
+    });
+
+    it('typed-fails malformed conversation payloads instead of treating them as empty reports', () => {
+        expect(() => __test__.extractDeepResearchFromConversationPayload({}))
+            .toThrow(CommandExecutionError);
+    });
+
+    it('ignores short widget previews that are not completed reports', () => {
+        expect(__test__.extractDeepResearchFromConversationPayload(makeDeepResearchPayload('short preview'))).toBeNull();
+    });
+});
+
 describe('chatgpt model selection validation', () => {
     it('rejects unknown model names', async () => {
         await expect(selectChatGPTModel({ nativeClick: vi.fn() }, 'unknown'))
@@ -143,45 +274,370 @@ describe('chatgpt model selection validation', () => {
     it('clicks the model selector and verifies the selected postcondition', async () => {
         let objectCall = 0;
         const page = {
+            goto: vi.fn().mockResolvedValue(undefined),
             wait: vi.fn().mockResolvedValue(undefined),
             nativeClick: vi.fn().mockResolvedValue(undefined),
             evaluate: vi.fn((script) => {
                 if (script === 'window.location.href') return Promise.resolve('https://chatgpt.com/c/demo');
                 objectCall += 1;
                 if (objectCall === 1) return Promise.resolve({ isLoggedIn: true, hasLoginGate: false, hasComposer: true });
-                if (objectCall === 2) return Promise.resolve({ model: 'instant', label: 'Instant' });
+                if (objectCall === 2) return Promise.resolve({ model: 'balanced', label: 'Balanced' });
                 if (objectCall === 3) return Promise.resolve({ found: true, x: 10, y: 20 });
                 if (objectCall === 4) return Promise.resolve({ found: true, x: 30, y: 40 });
-                if (objectCall === 5) return Promise.resolve({ model: 'pro', label: 'Pro' });
+                if (objectCall === 5) return Promise.resolve({ model: 'fast', label: 'Fast' });
                 return Promise.resolve({});
             }),
         };
 
-        await expect(selectChatGPTModel(page, 'pro')).resolves.toEqual({ Status: 'Success', Model: 'Pro' });
+        await expect(selectChatGPTModel(page, 'fast')).resolves.toEqual({ Status: 'Success', Model: 'Fast' });
         expect(page.nativeClick).toHaveBeenNthCalledWith(1, 10, 20);
         expect(page.nativeClick).toHaveBeenNthCalledWith(2, 30, 40);
+    });
+
+    it('sets Advanced through the ChatGPT model config API when browser cookies are available', async () => {
+        const fetchMock = vi.spyOn(globalThis, 'fetch')
+            .mockResolvedValueOnce(new Response(JSON.stringify({ accessToken: 'token' }), { status: 200 }))
+            .mockResolvedValueOnce(new Response(JSON.stringify({ success: true }), { status: 200 }));
+        let objectCall = 0;
+        const page = {
+            goto: vi.fn().mockResolvedValue(undefined),
+            wait: vi.fn().mockResolvedValue(undefined),
+            nativeClick: vi.fn().mockResolvedValue(undefined),
+            getCookies: vi.fn().mockResolvedValue([{ name: '__Secure-next-auth.session-token', value: 'cookie', domain: '.chatgpt.com' }]),
+            evaluate: vi.fn((script) => {
+                if (script === 'window.location.href') return Promise.resolve('https://chatgpt.com/c/demo');
+                if (String(script).includes('oai-last-model-config')) return Promise.resolve(true);
+                objectCall += 1;
+                if (objectCall === 1) return Promise.resolve({ isLoggedIn: true, hasLoginGate: false, hasComposer: true });
+                if (objectCall === 2) return Promise.resolve({ model: 'balanced', label: 'Balanced' });
+                if (objectCall === 3) return Promise.resolve({ isLoggedIn: true, hasLoginGate: false, hasComposer: true });
+                if (objectCall === 4) return Promise.resolve({ model: 'advanced', label: 'Advanced' });
+                return Promise.resolve({});
+            }),
+        };
+
+        await expect(selectChatGPTModel(page, 'thinking')).resolves.toEqual({ Status: 'Success', Model: 'Advanced' });
+        expect(fetchMock.mock.calls[1][0]).toContain('/backend-api/settings/user_last_used_model_config');
+        expect(fetchMock.mock.calls[1][0]).toContain('model_slug=gpt-5-5-thinking');
+        expect(fetchMock.mock.calls[1][0]).toContain('thinking_effort=extended');
+        expect(page.nativeClick).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the visible picker when the model config API does not prove selection', async () => {
+        vi.spyOn(globalThis, 'fetch')
+            .mockResolvedValueOnce(new Response(JSON.stringify({ accessToken: 'token' }), { status: 200 }))
+            .mockResolvedValueOnce(new Response(JSON.stringify({ success: true }), { status: 200 }));
+        let objectCall = 0;
+        const page = {
+            goto: vi.fn().mockResolvedValue(undefined),
+            wait: vi.fn().mockResolvedValue(undefined),
+            nativeClick: vi.fn().mockResolvedValue(undefined),
+            getCookies: vi.fn().mockResolvedValue([{ name: '__Secure-next-auth.session-token', value: 'cookie', domain: '.chatgpt.com' }]),
+            evaluate: vi.fn((script) => {
+                if (script === 'window.location.href') return Promise.resolve('https://chatgpt.com/c/demo');
+                if (String(script).includes('oai-last-model-config')) return Promise.resolve(true);
+                objectCall += 1;
+                if (objectCall === 1) return Promise.resolve({ isLoggedIn: true, hasLoginGate: false, hasComposer: true });
+                if (objectCall === 2) return Promise.resolve({ model: 'balanced', label: 'Balanced' });
+                if (objectCall === 3) return Promise.resolve({ isLoggedIn: true, hasLoginGate: false, hasComposer: true });
+                if (objectCall === 4) return Promise.resolve({ model: 'balanced', label: 'Balanced' });
+                if (objectCall === 5) return Promise.resolve({ found: true, x: 10, y: 20 });
+                if (objectCall === 6) return Promise.resolve({ found: true, x: 30, y: 40 });
+                if (objectCall === 7) return Promise.resolve({ model: 'advanced', label: 'Advanced' });
+                return Promise.resolve({});
+            }),
+        };
+
+        await expect(selectChatGPTModel(page, 'advanced')).resolves.toEqual({ Status: 'Success', Model: 'Advanced' });
+        expect(page.nativeClick).toHaveBeenNthCalledWith(1, 10, 20);
+        expect(page.nativeClick).toHaveBeenNthCalledWith(2, 30, 40);
+    });
+
+    it('falls back to the picker when the session API response is malformed', async () => {
+        vi.spyOn(globalThis, 'fetch')
+            .mockResolvedValueOnce(new Response('{', { status: 200 }));
+        let objectCall = 0;
+        const page = {
+            goto: vi.fn().mockResolvedValue(undefined),
+            wait: vi.fn().mockResolvedValue(undefined),
+            nativeClick: vi.fn().mockResolvedValue(undefined),
+            getCookies: vi.fn().mockResolvedValue([{ name: '__Secure-next-auth.session-token', value: 'cookie', domain: '.chatgpt.com' }]),
+            evaluate: vi.fn((script) => {
+                if (script === 'window.location.href') return Promise.resolve('https://chatgpt.com/c/demo');
+                objectCall += 1;
+                if (objectCall === 1) return Promise.resolve({ isLoggedIn: true, hasLoginGate: false, hasComposer: true });
+                if (objectCall === 2) return Promise.resolve({ model: 'balanced', label: 'Balanced' });
+                if (objectCall === 3) return Promise.resolve({ found: true, x: 10, y: 20 });
+                if (objectCall === 4) return Promise.resolve({ found: true, x: 30, y: 40 });
+                if (objectCall === 5) return Promise.resolve({ model: 'advanced', label: 'Advanced' });
+                return Promise.resolve({});
+            }),
+        };
+
+        await expect(selectChatGPTModel(page, 'advanced')).resolves.toEqual({ Status: 'Success', Model: 'Advanced' });
+        expect(page.nativeClick).toHaveBeenCalledTimes(2);
+    });
+
+    it('maps ChatGPT preference API auth rejection to AuthRequiredError', async () => {
+        vi.spyOn(globalThis, 'fetch')
+            .mockResolvedValueOnce(new Response(JSON.stringify({ accessToken: 'token' }), { status: 200 }))
+            .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401 }));
+        let objectCall = 0;
+        const page = {
+            goto: vi.fn().mockResolvedValue(undefined),
+            wait: vi.fn().mockResolvedValue(undefined),
+            nativeClick: vi.fn().mockResolvedValue(undefined),
+            getCookies: vi.fn().mockResolvedValue([{ name: '__Secure-next-auth.session-token', value: 'cookie', domain: '.chatgpt.com' }]),
+            evaluate: vi.fn((script) => {
+                if (script === 'window.location.href') return Promise.resolve('https://chatgpt.com/c/demo');
+                objectCall += 1;
+                if (objectCall === 1) return Promise.resolve({ isLoggedIn: true, hasLoginGate: false, hasComposer: true });
+                if (objectCall === 2) return Promise.resolve({ model: 'balanced', label: 'Balanced' });
+                return Promise.resolve({});
+            }),
+        };
+
+        await expect(selectChatGPTModel(page, 'advanced')).rejects.toBeInstanceOf(AuthRequiredError);
+    });
+
+    it('selects current Chinese intelligence options by exact visible menu text', async () => {
+        const page = createDomEvaluatePage(`
+            <form>
+              <button type="button" data-testid="model-switcher-dropdown-button">GPT-5.5 均衡</button>
+              <div id="prompt-textarea" contenteditable="true"></div>
+            </form>
+            <div role="menu">
+              <div role="menuitemradio">极速</div>
+              <div role="menuitemradio">均衡</div>
+              <div role="menuitemradio">高级</div>
+              <div role="menuitemradio">超高</div>
+              <div role="menuitemradio">专业</div>
+            </div>
+        `);
+        let clickCount = 0;
+        page.wait = vi.fn().mockResolvedValue(undefined);
+        page.nativeClick = vi.fn().mockImplementation(async () => {
+            clickCount += 1;
+            if (clickCount === 2) {
+                page.evaluate(`document.querySelector('[data-testid="model-switcher-dropdown-button"]').textContent = 'GPT-5.5 超高'`);
+            }
+        });
+
+        await expect(selectChatGPTModel(page, 'very-high')).resolves.toEqual({ Status: 'Success', Model: 'Very High' });
+        expect(page.nativeClick).toHaveBeenCalledTimes(2);
+    });
+
+    it('verifies selection from stable model test id when the current visible label is unknown', async () => {
+        const page = createDomEvaluatePage(`
+            <form>
+              <button type="button" data-testid="model-switcher-dropdown-button">Mode rapide</button>
+              <div id="prompt-textarea" contenteditable="true"></div>
+            </form>
+            <div role="menu">
+              <div role="menuitemradio">极速</div>
+            </div>
+        `);
+        let clickCount = 0;
+        page.nativeClick = vi.fn().mockImplementation(async () => {
+            clickCount += 1;
+            if (clickCount === 2) {
+                await page.evaluate(`
+                    const button = document.querySelector('[data-testid="model-switcher-dropdown-button"]');
+                    button.innerHTML = '<span data-testid="model-switcher-gpt-5-5">Mode rapide</span>';
+                `);
+                for (const node of page.dom.window.document.querySelectorAll('[data-testid]')) {
+                    node.getBoundingClientRect = () => ({ width: 120, height: 36 });
+                    node.scrollIntoView = () => {};
+                }
+            }
+        });
+
+        await expect(selectChatGPTModel(page, 'instant')).resolves.toEqual({ Status: 'Success', Model: 'Fast' });
+        expect(page.nativeClick).toHaveBeenCalledTimes(2);
+    });
+
+    it('selects actual English intelligence options by visible menu text', async () => {
+        const page = createDomEvaluatePage(`
+            <form>
+              <button type="button" data-testid="model-switcher-dropdown-button">Instant</button>
+              <div id="prompt-textarea" contenteditable="true"></div>
+            </form>
+            <div role="menu" data-testid="composer-intelligence-picker-content">
+              <div role="group">
+                <div role="menuitemradio">Instant</div>
+                <div role="menuitemradio">Medium</div>
+                <div role="menuitemradio">High</div>
+                <div role="menuitemradio">Extra High</div>
+                <div role="menuitemradio">Pro</div>
+              </div>
+            </div>
+        `);
+        let clickCount = 0;
+        page.nativeClick = vi.fn().mockImplementation(async () => {
+            clickCount += 1;
+            if (clickCount === 2) {
+                page.evaluate(`document.querySelector('[data-testid="model-switcher-dropdown-button"]').textContent = 'Extra High'`);
+            }
+        });
+
+        await expect(selectChatGPTModel(page, 'extra-high')).resolves.toEqual({ Status: 'Success', Model: 'Very High' });
+        expect(page.nativeClick).toHaveBeenCalledTimes(2);
+    });
+
+    it('selects Instant when the current precise level is Medium', async () => {
+        const page = createDomEvaluatePage(`
+            <form>
+              <button type="button" data-testid="model-switcher-dropdown-button">Medium</button>
+              <div id="prompt-textarea" contenteditable="true"></div>
+            </form>
+            <div role="menu" data-testid="composer-intelligence-picker-content">
+              <div role="group">
+                <div role="menuitemradio">Instant</div>
+                <div role="menuitemradio">Medium</div>
+                <div role="menuitemradio">High</div>
+                <div role="menuitemradio">Extra High</div>
+                <div role="menuitemradio">Pro</div>
+              </div>
+            </div>
+        `);
+        let clickCount = 0;
+        page.nativeClick = vi.fn().mockImplementation(async () => {
+            clickCount += 1;
+            if (clickCount === 2) {
+                page.evaluate(`document.querySelector('[data-testid="model-switcher-dropdown-button"]').textContent = 'Instant'`);
+            }
+        });
+
+        await expect(selectChatGPTModel(page, 'instant')).resolves.toEqual({ Status: 'Success', Model: 'Fast' });
+        expect(page.nativeClick).toHaveBeenCalledTimes(2);
+    });
+
+    it('selects Balanced when the current precise level is Extra High', async () => {
+        const page = createDomEvaluatePage(`
+            <form>
+              <button type="button" data-testid="model-switcher-dropdown-button">Extra High</button>
+              <div id="prompt-textarea" contenteditable="true"></div>
+            </form>
+            <div role="menu" data-testid="composer-intelligence-picker-content">
+              <div role="group">
+                <div role="menuitemradio">Instant</div>
+                <div role="menuitemradio">Medium</div>
+                <div role="menuitemradio">High</div>
+                <div role="menuitemradio">Extra High</div>
+                <div role="menuitemradio">Pro</div>
+              </div>
+            </div>
+        `);
+        let clickCount = 0;
+        page.nativeClick = vi.fn().mockImplementation(async () => {
+            clickCount += 1;
+            if (clickCount === 2) {
+                page.evaluate(`document.querySelector('[data-testid="model-switcher-dropdown-button"]').textContent = 'Medium'`);
+            }
+        });
+
+        await expect(selectChatGPTModel(page, 'balanced')).resolves.toEqual({ Status: 'Success', Model: 'Balanced' });
+        expect(page.nativeClick).toHaveBeenCalledTimes(2);
+    });
+
+    it('uses guarded intelligence menu order for unknown localized labels', async () => {
+        const page = createDomEvaluatePage(`
+            <form>
+              <button type="button" data-testid="model-switcher-dropdown-button">Mode rapide</button>
+              <div id="prompt-textarea" contenteditable="true"></div>
+            </form>
+            <div role="menu" data-testid="composer-intelligence-picker-content">
+              <div role="group">
+                <div role="menuitemradio" aria-checked="false">L0</div>
+                <div role="menuitemradio" aria-checked="false">L1</div>
+                <div role="menuitemradio" aria-checked="false">L2</div>
+                <div role="menuitemradio" aria-checked="false">L3</div>
+                <div role="menuitemradio" aria-checked="false">L4</div>
+              </div>
+            </div>
+        `);
+        let clickCount = 0;
+        page.nativeClick = vi.fn().mockImplementation(async () => {
+            clickCount += 1;
+            if (clickCount === 2) {
+                const options = page.dom.window.document.querySelectorAll('[role="menuitemradio"]');
+                for (const option of options) option.setAttribute('aria-checked', 'false');
+                options[3].setAttribute('aria-checked', 'true');
+            }
+        });
+
+        await expect(selectChatGPTModel(page, 'extra-high')).resolves.toEqual({ Status: 'Success', Model: 'Very High' });
+        expect(page.nativeClick).toHaveBeenCalledTimes(4);
+    });
+
+    it('does not use order fallback outside the guarded five-option intelligence picker', async () => {
+        const page = createDomEvaluatePage(`
+            <form>
+              <button type="button" data-testid="model-switcher-dropdown-button">Mode rapide</button>
+              <div id="prompt-textarea" contenteditable="true"></div>
+            </form>
+            <div role="menu">
+              <div role="group">
+                <div role="menuitemradio">L0</div>
+                <div role="menuitemradio">L1</div>
+                <div role="menuitemradio">L2</div>
+                <div role="menuitemradio">L3</div>
+                <div role="menuitemradio">L4</div>
+              </div>
+            </div>
+        `);
+        page.nativeClick = vi.fn().mockResolvedValue(undefined);
+
+        await expect(selectChatGPTModel(page, 'extra-high')).rejects.toMatchObject({
+            code: 'COMMAND_EXEC',
+            message: expect.stringContaining('Could not click the ChatGPT Very High model option'),
+        });
+    });
+
+    it('does not use order fallback when the intelligence picker does not expose exactly five options', async () => {
+        const page = createDomEvaluatePage(`
+            <form>
+              <button type="button" data-testid="model-switcher-dropdown-button">Mode rapide</button>
+              <div id="prompt-textarea" contenteditable="true"></div>
+            </form>
+            <div role="menu" data-testid="composer-intelligence-picker-content">
+              <div role="group">
+                <div role="menuitemradio">L0</div>
+                <div role="menuitemradio">L1</div>
+                <div role="menuitemradio">L2</div>
+                <div role="menuitemradio">L3</div>
+              </div>
+            </div>
+        `);
+        page.nativeClick = vi.fn().mockResolvedValue(undefined);
+
+        await expect(selectChatGPTModel(page, 'very-high')).rejects.toMatchObject({
+            code: 'COMMAND_EXEC',
+            message: expect.stringContaining('Could not click the ChatGPT Very High model option'),
+        });
     });
 
     it('fails closed when the postcondition does not prove the requested model', async () => {
         let objectCall = 0;
         const page = {
+            goto: vi.fn().mockResolvedValue(undefined),
             wait: vi.fn().mockResolvedValue(undefined),
             nativeClick: vi.fn().mockResolvedValue(undefined),
             evaluate: vi.fn((script) => {
                 if (script === 'window.location.href') return Promise.resolve('https://chatgpt.com/c/demo');
                 objectCall += 1;
                 if (objectCall === 1) return Promise.resolve({ isLoggedIn: true, hasLoginGate: false, hasComposer: true });
-                if (objectCall === 2) return Promise.resolve({ model: 'instant', label: 'Instant' });
+                if (objectCall === 2) return Promise.resolve({ model: 'balanced', label: 'Balanced' });
                 if (objectCall === 3) return Promise.resolve({ found: true, x: 10, y: 20 });
                 if (objectCall === 4) return Promise.resolve({ found: true, x: 30, y: 40 });
-                if (objectCall === 5) return Promise.resolve({ model: 'instant', label: 'Instant' });
+                if (objectCall === 5) return Promise.resolve({ model: 'balanced', label: 'Balanced' });
                 return Promise.resolve({});
             }),
         };
 
-        await expect(selectChatGPTModel(page, 'pro')).rejects.toMatchObject({
+        await expect(selectChatGPTModel(page, 'fast')).rejects.toMatchObject({
             code: 'COMMAND_EXEC',
-            message: expect.stringContaining('did not switch to Pro'),
+            message: expect.stringContaining('did not switch to Fast'),
         });
     });
 });
@@ -417,14 +873,34 @@ describe('chatgpt generation state', () => {
 
 describe('chatgpt current model detection', () => {
     it.each([
-        ['Instant', { model: 'instant', label: 'Instant' }],
-        ['Thinking', { model: 'thinking', label: 'Thinking' }],
+        ['Instant', { model: 'fast', label: 'Fast' }],
+        ['Medium', { model: 'balanced', label: 'Balanced' }],
+        ['Thinking', { model: 'advanced', label: 'Advanced' }],
+        ['High', { model: 'advanced', label: 'Advanced' }],
+        ['Extra High', { model: 'very-high', label: 'Very High' }],
         ['Pro', { model: 'pro', label: 'Pro' }],
+        ['GPT-5.5 极速', { model: 'fast', label: 'Fast' }],
+        ['GPT-5.5 均衡', { model: 'balanced', label: 'Balanced' }],
+        ['智能水平 高级', { model: 'advanced', label: 'Advanced' }],
+        ['GPT-5.5 超高', { model: 'very-high', label: 'Very High' }],
+        ['GPT-5.5 专业', { model: 'pro', label: 'Pro' }],
         ['进阶专业', { model: 'pro', label: 'Pro' }],
     ])('detects the visible %s model label', async (label, expected) => {
         const page = createDomEvaluatePage(`<form><button>${label}</button></form>`);
 
         await expect(getCurrentChatGPTModel(page)).resolves.toEqual(expected);
+    });
+
+    it('uses model-specific test ids before visible text labels', async () => {
+        const page = createDomEvaluatePage(`
+            <form>
+              <button type="button">
+                <span data-testid="model-switcher-gpt-5-5-pro">Niveau inconnu</span>
+              </button>
+            </form>
+        `);
+
+        await expect(getCurrentChatGPTModel(page)).resolves.toEqual({ model: 'pro', label: 'Pro' });
     });
 
     it('returns null fields when the model selector is missing', async () => {
@@ -853,5 +1329,324 @@ describe('chatgpt image upload helper', () => {
         expect(__test__.imageMimeFromPath('/tmp/a.png')).toBe('image/png');
         expect(__test__.imageMimeFromPath('/tmp/a.webp')).toBe('image/webp');
         expect(__test__.imageMimeFromPath('/tmp/a.jpg')).toBe('image/jpeg');
+    });
+});
+
+describe('chatgpt project id parsing', () => {
+    it('accepts project hex ids and /g/g-p- URLs', () => {
+        expect(__test__.parseChatGPTProjectId('12345678abcdef90')).toBe('12345678abcdef90');
+        expect(__test__.parseChatGPTProjectId('https://chatgpt.com/g/g-p-12345678abcdef90')).toBe('12345678abcdef90');
+        expect(__test__.parseChatGPTProjectId('/g/g-p-abcdef0123456789')).toBe('abcdef0123456789');
+    });
+
+    it('accepts g-p-{hex_id}-{slug} pattern', () => {
+        expect(__test__.parseChatGPTProjectId('g-p-12345678-my-project')).toBe('12345678');
+    });
+
+    it('rejects invalid project ids', () => {
+        expect(() => __test__.parseChatGPTProjectId('')).toThrow(/project/);
+        expect(() => __test__.parseChatGPTProjectId('https://chatgpt.com/')).toThrow(/project/);
+        expect(() => __test__.parseChatGPTProjectId('https://evil.test/g/g-p-12345678')).toThrow(/project/);
+        expect(() => __test__.parseChatGPTProjectId('http://chatgpt.com/g/g-p-12345678')).toThrow(/project/);
+        expect(() => __test__.parseChatGPTProjectId('g-p-a-short')).toThrow(/project/);
+        expect(() => __test__.parseChatGPTProjectId('https://chatgpt.com/g/g-p-a-short')).toThrow(/project/);
+    });
+});
+
+describe('chatgpt project navigation', () => {
+    it('verifies the current URL stays bound to the requested project', async () => {
+        const page = {
+            goto: vi.fn().mockResolvedValue(undefined),
+            wait: vi.fn().mockResolvedValue(undefined),
+            evaluate: vi.fn().mockResolvedValue({
+                url: 'https://chatgpt.com/g/g-p-deadbeef',
+                title: 'Other Project',
+                hasComposer: true,
+                isLoggedIn: true,
+                hasLoginGate: false,
+            }),
+        };
+
+        await expect(navigateToProject(page, '12345678')).rejects.toBeInstanceOf(CommandExecutionError);
+    });
+
+    it('maps project login redirects to AuthRequiredError', async () => {
+        const page = {
+            goto: vi.fn().mockResolvedValue(undefined),
+            wait: vi.fn().mockResolvedValue(undefined),
+            evaluate: vi.fn().mockResolvedValue({
+                url: 'https://chatgpt.com/auth/login',
+                title: 'Log in',
+                hasComposer: false,
+                isLoggedIn: false,
+                hasLoginGate: true,
+            }),
+        };
+
+        await expect(navigateToProject(page, '12345678')).rejects.toBeInstanceOf(AuthRequiredError);
+    });
+});
+
+describe('chatgpt file path validation', () => {
+    it('validates local files for project upload (any type)', async () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencli-chatgpt-'));
+        tempDirs.push(dir);
+        const pdfPath = path.join(dir, 'report.pdf');
+        fs.writeFileSync(pdfPath, 'fake-pdf');
+        const docxPath = path.join(dir, 'notes.docx');
+        fs.writeFileSync(docxPath, 'fake-docx');
+
+        const { prepareChatGPTFilePaths } = await import('./utils.js');
+        await expect(prepareChatGPTFilePaths([pdfPath])).resolves.toEqual({ ok: true, paths: [pdfPath] });
+        await expect(prepareChatGPTFilePaths([pdfPath, docxPath])).resolves.toEqual({ ok: true, paths: [pdfPath, docxPath] });
+        await expect(prepareChatGPTFilePaths([path.join(dir, 'missing.txt')])).resolves.toMatchObject({
+            ok: false,
+            reason: expect.stringContaining('File not found'),
+        });
+    });
+});
+
+describe('chatgpt project file upload helper', () => {
+    it('exposes mimeFromFilePath for fallback upload', () => {
+        expect(__test__.mimeFromFilePath('/tmp/report.pdf')).toBe('application/pdf');
+        expect(__test__.mimeFromFilePath('/tmp/notes.docx')).toBe('application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+        expect(__test__.mimeFromFilePath('/tmp/data.csv')).toBe('text/csv');
+        expect(__test__.mimeFromFilePath('/tmp/code.py')).toBe('text/x-python');
+        expect(__test__.mimeFromFilePath('/tmp/image.png')).toBe('image/png');
+        expect(__test__.mimeFromFilePath('/tmp/unknown.xyz')).toBe('application/octet-stream');
+    });
+
+    it('exposes PROJECT_LINK_SELECTOR for project link extraction', () => {
+        expect(__test__.PROJECT_LINK_SELECTOR).toBe('a[href*="/g/g-p-"]');
+    });
+
+    it('extracts visible project anchors from the sidebar without React Fiber internals', async () => {
+        const dom = new JSDOM(`
+            <!doctype html>
+            <a data-sidebar-item="true" href="/g/g-p-12345678-alpha">
+              <span data-testid="project-folder-icon"></span>
+              Project Alpha
+            </a>
+            <a data-sidebar-item="true" href="https://chatgpt.com/g/g-p-12345678-alpha?model=gpt-5">
+              <span data-testid="project-folder-icon"></span>
+              Duplicate Alpha
+            </a>
+            <a data-sidebar-item="true" href="/g/g-p-abcdef90">
+              <span data-testid="project-folder-icon"></span>
+              Project Beta
+            </a>
+            <a data-sidebar-item="true" href="https://evil.test/g/g-p-badbadbad">
+              <span data-testid="project-folder-icon"></span>
+              Evil Project
+            </a>
+            <a data-sidebar-item="true" href="/g/g-p-a-short">
+              <span data-testid="project-folder-icon"></span>
+              Short Bait
+            </a>
+        `, {
+            url: 'https://chatgpt.com/',
+            runScripts: 'outside-only',
+        });
+        for (const el of dom.window.document.querySelectorAll('[data-sidebar-item="true"]')) {
+            el.getBoundingClientRect = () => ({ width: 240, height: 32 });
+        }
+
+        const page = {
+            wait: vi.fn().mockResolvedValue(undefined),
+            goto: vi.fn().mockResolvedValue(undefined),
+            evaluate: vi.fn((script) => Promise.resolve(dom.window.eval(String(script)))),
+        };
+
+        const { getProjectList } = await import('./utils.js');
+        await expect(getProjectList(page)).resolves.toEqual([
+            {
+                Index: 1,
+                Id: '12345678',
+                Title: 'Project Alpha',
+                Url: 'https://chatgpt.com/g/g-p-12345678-alpha',
+            },
+            {
+                Index: 2,
+                Id: 'abcdef90',
+                Title: 'Project Beta',
+                Url: 'https://chatgpt.com/g/g-p-abcdef90',
+            },
+        ]);
+    });
+
+    it('opens project knowledge dialog by finding an "Add files" button', async () => {
+        const page = {
+            wait: vi.fn().mockResolvedValue(undefined),
+            setFileInput: vi.fn(),
+            evaluate: vi.fn((script) => {
+                if (String(script).includes('Add files')) {
+                    return Promise.resolve(true);
+                }
+                if (String(script).includes('role="dialog"')) {
+                    return Promise.resolve(true);
+                }
+                return Promise.resolve(undefined);
+            }),
+        };
+
+        const { openProjectKnowledgeDialog } = await import('./utils.js');
+        const result = await openProjectKnowledgeDialog(page);
+        expect(result).toBe(true);
+    });
+
+    it('reports failure when no Add files button is found', async () => {
+        const page = {
+            wait: vi.fn().mockResolvedValue(undefined),
+            setFileInput: vi.fn(),
+            evaluate: vi.fn().mockResolvedValue(false),
+        };
+
+        const { openProjectKnowledgeDialog } = await import('./utils.js');
+        const result = await openProjectKnowledgeDialog(page);
+        expect(result).toBe(false);
+    });
+
+    it('opens the live project Sources tab upload surface when no Add files dialog exists', async () => {
+        const dom = new JSDOM(`
+            <!doctype html>
+            <button role="tab" aria-selected="true">Chats</button>
+            <button role="tab" aria-selected="false" id="project-home-tabs-demo-sources">Sources</button>
+            <div role="tabpanel" data-state="inactive"></div>
+        `, {
+            url: 'https://chatgpt.com/g/g-p-12345678-demo/project',
+            runScripts: 'outside-only',
+        });
+        const sourcesTab = dom.window.document.querySelector('#project-home-tabs-demo-sources');
+        sourcesTab.getBoundingClientRect = () => ({ width: 96, height: 32 });
+        sourcesTab.addEventListener('click', () => {
+            sourcesTab.setAttribute('aria-selected', 'true');
+            sourcesTab.dataset.clicked = 'true';
+        });
+
+        const page = {
+            wait: vi.fn().mockResolvedValue(undefined),
+            evaluate: vi.fn((script) => Promise.resolve(dom.window.eval(String(script)))),
+        };
+
+        const { openProjectKnowledgeDialog } = await import('./utils.js');
+        await expect(openProjectKnowledgeDialog(page)).resolves.toBe(true);
+        expect(sourcesTab.dataset.clicked).toBe('true');
+    });
+
+    it('projects file upload uses dialog file input selectors and waits for filename confirmation', async () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencli-chatgpt-'));
+        tempDirs.push(dir);
+        const filePath = path.join(dir, 'report.pdf');
+        fs.writeFileSync(filePath, 'fake-pdf');
+
+        const page = {
+            goto: vi.fn().mockResolvedValue(undefined),
+            wait: vi.fn().mockResolvedValue(undefined),
+            nativeType: vi.fn(),
+            setFileInput: vi.fn().mockRejectedValue(new Error('No element found')),
+            evaluate: vi.fn((script) => {
+                const s = String(script);
+                // getPageState returns a specific object
+                if (s.includes('isVisible') && s.includes('hasComposer') && s.includes('isLoggedIn')) {
+                    return Promise.resolve({ session: 'test', data: { url: 'https://chatgpt.com/g/g-p-12345678', title: 'Project', hasComposer: true, isLoggedIn: true, hasLoginGate: false } });
+                }
+                if (s.includes('expectedFileNames')) {
+                    return Promise.resolve({ ok: true });
+                }
+                if (s.includes('new DataTransfer()')) {
+                    return Promise.resolve({ ok: true });
+                }
+                if (s.includes('Add files')) return Promise.resolve(true);
+                if (s.includes('role="dialog"')) return Promise.resolve(true);
+                return Promise.resolve(undefined);
+            }),
+        };
+
+        const { uploadChatGPTProjectFiles } = await import('./utils.js');
+        const result = await uploadChatGPTProjectFiles(page, '12345678', [filePath]);
+
+        expect(result).toEqual({ ok: true, files: [filePath] });
+        expect(page.goto).toHaveBeenCalledWith(
+            expect.stringContaining('/g/g-p-12345678'),
+            expect.any(Object),
+        );
+        expect(page.evaluate.mock.calls.some(([script]) => String(script).includes('expectedFileNames'))).toBe(true);
+    });
+
+    it('returns failure when project upload confirmation does not appear', async () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencli-chatgpt-'));
+        tempDirs.push(dir);
+        const filePath = path.join(dir, 'missing-confirmation.pdf');
+        fs.writeFileSync(filePath, 'fake-pdf');
+
+        const page = {
+            goto: vi.fn().mockResolvedValue(undefined),
+            wait: vi.fn().mockResolvedValue(undefined),
+            setFileInput: vi.fn().mockResolvedValue(undefined),
+            evaluate: vi.fn((script) => {
+                const s = String(script);
+                if (s.includes('isVisible') && s.includes('hasComposer') && s.includes('isLoggedIn')) {
+                    return Promise.resolve({ session: 'test', data: { url: 'https://chatgpt.com/g/g-p-12345678', title: 'Project', hasComposer: true, isLoggedIn: true, hasLoginGate: false } });
+                }
+                if (s.includes('expectedFileNames')) return Promise.resolve({ ok: false, reason: 'uploaded file did not appear in project knowledge' });
+                if (s.includes('Add files')) return Promise.resolve(true);
+                if (s.includes('role="dialog"')) return Promise.resolve(true);
+                return Promise.resolve(undefined);
+            }),
+        };
+
+        const { uploadChatGPTProjectFiles } = await import('./utils.js');
+        const result = await uploadChatGPTProjectFiles(page, '12345678', [filePath]);
+
+        expect(result).toMatchObject({
+            ok: false,
+            reason: expect.stringContaining('uploaded file did not appear'),
+        });
+    });
+
+    it('does not treat composer/body filename text as project knowledge confirmation', async () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencli-chatgpt-'));
+        tempDirs.push(dir);
+        const filePath = path.join(dir, 'composer-only.pdf');
+        fs.writeFileSync(filePath, 'fake-pdf');
+
+        const dom = new JSDOM(`
+            <!doctype html>
+            <main>
+              <form data-type="unified-composer">
+                <input id="upload-files" type="file">
+                <span>composer-only.pdf</span>
+              </form>
+            </main>
+        `, {
+            url: 'https://chatgpt.com/g/g-p-12345678',
+            runScripts: 'outside-only',
+        });
+
+        const page = {
+            goto: vi.fn().mockResolvedValue(undefined),
+            wait: vi.fn().mockResolvedValue(undefined),
+            setFileInput: vi.fn().mockResolvedValue(undefined),
+            evaluate: vi.fn((script) => {
+                const s = String(script);
+                if (s.includes('isVisible') && s.includes('hasComposer') && s.includes('isLoggedIn')) {
+                    return Promise.resolve({ session: 'test', data: { url: 'https://chatgpt.com/g/g-p-12345678', title: 'Project', hasComposer: true, isLoggedIn: true, hasLoginGate: false } });
+                }
+                if (s.includes('expectedFileNames')) {
+                    return Promise.resolve(dom.window.eval(s));
+                }
+                if (s.includes('Add files')) return Promise.resolve(true);
+                if (s.includes('role="dialog"')) return Promise.resolve(true);
+                return Promise.resolve(undefined);
+            }),
+        };
+
+        const { uploadChatGPTProjectFiles } = await import('./utils.js');
+        const result = await uploadChatGPTProjectFiles(page, '12345678', [filePath]);
+
+        expect(result).toMatchObject({
+            ok: false,
+            reason: expect.stringContaining('project knowledge surface'),
+        });
     });
 });

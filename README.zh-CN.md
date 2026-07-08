@@ -21,7 +21,16 @@ OpenCLI 可以用同一套 CLI 做三类事情：
 
 ### 1. 安装 OpenCLI
 
-OpenCLI 要求 **Node.js >= 20**。
+如果你是在自己的电脑上使用，优先安装 **OpenCLIApp**。它会内置
+OpenCLI runtime，帮你安装 / 修复受管理的 `opencli` 命令，并提供系统托盘
+UI 来做环境诊断、更新、浏览器登录态保活和网页转 Markdown。
+
+**方式 A — OpenCLIApp（macOS / Windows 推荐）：**
+从 <https://opencli.info/download> 下载最新版 App，安装后打开一次，在
+System 页面安装或修复 `opencli` 命令。
+
+**方式 B — npm 全局安装（纯 CLI / CI / 服务器）：**
+通过 npm 安装时，OpenCLI 要求 **Node.js >= 20**。
 
 ```bash
 node --version
@@ -148,7 +157,7 @@ Agent 在内部自动处理所有 `opencli browser` 命令——你只需用自�
 |------|--------|------|
 | `OPENCLI_DAEMON_PORT` | `19825` | daemon-extension 通信端口 |
 | `OPENCLI_WINDOW` | 命令默认值 | 设为 `foreground` 或 `background` 来覆盖 Browser Bridge 窗口位置。浏览器型命令也支持 `--window <foreground\|background>` |
-| `OPENCLI_BROWSER_CONNECT_TIMEOUT` | `30` | 浏览器连接超时（秒） |
+| `OPENCLI_BROWSER_CONNECT_TIMEOUT` | `45` | 浏览器连接超时（秒） |
 | `OPENCLI_BROWSER_COMMAND_TIMEOUT` | `60` | 单个浏览器命令超时（秒） |
 | `OPENCLI_CDP_ENDPOINT` | — | Chrome DevTools Protocol 端点，用于远程浏览器或 Electron 应用 |
 | `OPENCLI_CDP_TARGET` | — | 按 URL 子串过滤 CDP target（如 `detail.1688.com`） |
@@ -163,10 +172,11 @@ Agent 在内部自动处理所有 `opencli browser` 命令——你只需用自�
 
 | 站点 | 命令 |
 |------|------|
-| **xiaohongshu** | `search` `note` `comments` `notifications` `feed` `user` `download` `publish` `follow` `unfollow` `creator-notes` `creator-note-detail` `creator-notes-summary` `creator-profile` `creator-stats` |
+| **xiaohongshu** | `search` `ask` `note` `comments` `notifications` `feed` `user` `saved` `liked` `download` `publish` `follow` `unfollow` `creator-notes` `creator-note-detail` `creator-notes-summary` `creator-profile` `creator-stats` |
 | **bilibili** | `hot` `search` `me` `favorite` `history` `feed` `subtitle` `summary` `video` `comments` `dynamic` `ranking` `following` `follow` `unfollow` `user-videos` `download` |
 | **zhihu** | `hot` `search` `question` `download` `follow` `like` `favorite` `comment` `answer` |
 | **hackernews** | `top` `new` `best` `ask` `show` `jobs` `search` `user` |
+| **hltv** | `search` `player-summary` `player-matches` `player-form` `player-map-pool` `player-vs-team` `player-teammate-impact` `player-duel` `match-map` `match-series` `team-matches` `team-map-pool` `event-matches` |
 | **geogebra** | `eval` `add-point` `add-line` `add-circle` `add-polygon` `triangle` `hexagon` `list` `info` |
 | **linkedin** | `connect` `inbox` `job-detail` `jobs-preferences` `post-analytics` `posts` `profile-experience` `profile-projects` `profile-read` `profile-analytics` `safe-send` `search` `people-search` `services-read` `sent-invitations` `thread-snapshot` `timeline` `salesnav-search` `salesnav-inbox` `salesnav-message` `salesnav-thread` |
 | **reddit** | `hot` `frontpage` `popular` `search` `subreddit` `read` `user` `user-posts` `user-comments` `upvote` `save` `comment` `subscribe` `saved` `upvoted` |
@@ -177,6 +187,7 @@ Agent 在内部自动处理所有 `opencli browser` 命令——你只需用自�
 | **amazon** | `bestsellers` `search` `product` `offer` `discussion` `movers-shakers` `new-releases` `rankings` |
 | **upwork** | `search` `feed` `detail` |
 | **slock** | `message-send` `message-read` `message-search` `channel-list` `channel-info` `channel-create` `channel-members` `channel-join` `task-list` `task-create` `task-claim` `task-status` `task-convert` `task-delete` `thread-list` `thread-follow` `attachment-upload` `attachment-download` `bookmark-add` `inbox` `dm-list` `server-list` `server-use` `whoami` |
+| **huodongxing** | `events` |
 
 精选清单 — **[→ 查看全部 100+ 站点和命令](./docs/adapters/index.md)**（小红书 / B站 / 知乎 / Twitter / Reddit / 抖音 / 微博 / 微信读书 / 小宇宙 / 1688 / 夸克 / Spotify / 牛客 / arxiv / Chess.com / Bilibili / 等）。
 
