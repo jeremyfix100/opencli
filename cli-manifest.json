@@ -15880,7 +15880,6 @@
     "type": "js",
     "modulePath": "guazi/car.js",
     "sourceFile": "guazi/car.js"
->>>>>>> upstream/main
   },
   {
     "site": "hackernews",
@@ -17383,7 +17382,6 @@
     "modulePath": "hltv/team-matches.js",
     "sourceFile": "hltv/team-matches.js",
     "navigateBefore": false
->>>>>>> upstream/main
   },
   {
     "site": "homebrew",
@@ -41572,7 +41570,6 @@
     "modulePath": "xiaohongshu/ask.js",
     "sourceFile": "xiaohongshu/ask.js",
     "navigateBefore": false
->>>>>>> upstream/main
   },
   {
     "site": "xiaohongshu",
